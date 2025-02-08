@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import sqlite3
@@ -118,4 +117,3 @@ def load_tasks():
 
 if __name__ == '__main__':
     app.run(debug=True)
->>>>>>> 8392506036798c45e4b9c32f8abd1b1b9d762472
