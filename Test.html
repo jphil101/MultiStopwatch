@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Task Timers</title>
+  <script defer>
+    // Stopwatch class for managing time
+    class Stopwatch {
+      constructor(displayElement) {
+        this.startTime = null;
+        this.elapsedTime = 0;
+        this.timerInterval = null;
+        this.displayElement = displayElement;
+      }
+
+      formatTime(milliseconds) {
+        const totalSeconds = Math.floor(milliseconds / 1000);
+        const minutes = Math.floor(totalSeconds / 60);
+        const seconds = totalSeconds % 60;
+        const ms = Math.floor((milliseconds % 1000) / 10);
+        return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}.${ms.toString().padStart(2, '0')}`;
+      }
+
+      start() {
+        if (this.timerInterval) return; // Prevent multiple intervals
+        this.startTime = Date.now() - this.elapsedTime;
+        this.timerInterval = setInterval(() => {
+          this.elapsedTime = Date.now() - this.startTime;
+          this.displayElement.textContent = this.formatTime(this.elapsedTime);
+        }, 10);
+      }
+
+      stop() {
+        clearInterval(this.timerInterval);
+        this.timerInterval = null;
+      }
+
+      reset() {
+        this.stop();
+        this.elapsedTime = 0;
+        this.displayElement.textContent = this.formatTime(this.elapsedTime);
+      }
+    }
+
+    // Add a new row
+    function addRow() {
+      const rowContainer = document.getElementById('rows');
+      const row = createRow();
+      rowContainer.appendChild(row);
+    }
+
+    // Remove the last row
+    function removeRow() {
+      const rowContainer = document.getElementById('rows');
+      if (rowContainer.children.length > 1) {
+        rowContainer.removeChild(rowContainer.lastChild);
+      }
+    }
+
+    // Create a new row element
+    function createRow() {
+      const row = document.createElement('div');
+      row.className = 'row';
+
+      const stopwatchDisplay = document.createElement('span');
+      stopwatchDisplay.textContent = '00:00.00';
+      stopwatchDisplay.className = 'stopwatch';
+
+      const taskInput = document.createElement('input');
+      taskInput.type = 'text';
+      taskInput.placeholder = 'Task Name';
+      taskInput.className = 'task-input';
+
+      const startButton = document.createElement('button');
+      startButton.textContent = 'Start';
+      startButton.className = 'start-btn';
+
+      const stopButton = document.createElement('button');
+      stopButton.textContent = 'Stop';
+      stopButton.className = 'stop-btn';
+
+      const resetButton = document.createElement('button');
+      resetButton.textContent = 'Reset';
+      resetButton.className = 'reset-btn';
+
+      const stopwatch = new Stopwatch(stopwatchDisplay);
+      startButton.onclick = () => stopwatch.start();
+      stopButton.onclick = () => stopwatch.stop();
+      resetButton.onclick = () => stopwatch.reset();
+
+      row.appendChild(stopwatchDisplay);
+      row.appendChild(taskInput);
+      row.appendChild(startButton);
+      row.appendChild(stopButton);
+      row.appendChild(resetButton);
+
+      return row;
+    }
+
+    // Initialize with one row
+    window.onload = function () {
+      addRow();
+
+      // Attach row management buttons
+      document.getElementById('add-row').onclick = addRow;
+      document.getElementById('remove-row').onclick = removeRow;
+    };
+  </script>
+  <style>
+    /* Overall Page Styles */
+    body {
+      font-family: Arial, sans-serif;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      background-color: #001f3f; /* Navy blue background */
+    }
+
+    h1 {
+      margin-bottom: 20px;
+      font-size: 24px;
+      text-align: center;
+      color: white;
+    }
+
+    /* Container for the App */
+    #container {
+      width: 80%;
+      max-width: 600px;
+      background: white;
+      box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+      border-radius: 8px;
+      padding: 20px;
+    }
+
+    /* Stopwatch Row Styles */
+    .row {
+      display: flex;
+      align-items: center;
+      margin-bottom: 10px;
+    }
+
+    .row .stopwatch {
+      width: 100px;
+      text-align: center;
+      font-size: 16px;
+      font-weight: bold;
+      margin-right: 10px;
+    }
+
+    .row .task-input {
+      flex-grow: 1;
+      padding: 5px;
+      margin-right: 10px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+    }
+
+    /* Button Styles */
+    .row button {
+      padding: 5px 10px;
+      margin-right: 5px;
+      border: none;
+      border-radius: 12px; /* Rounded edges for buttons */
+      cursor: pointer;
+    }
+
+    .row .start-btn {
+      background-color: #28a745;
+      color: white;
+    }
+
+    .row .stop-btn {
+      background-color: #dc3545;
+      color: white;
+    }
+
+    .row .reset-btn {
+      background-color: #ffc107;
+      color: black;
+    }
+
+    /* Control Buttons */
+    .controls {
+      display: flex;
+      justify-content: space-between;
+      margin-top: 20px;
+    }
+
+    .controls button {
+      padding: 10px 20px;
+      border: none;
+      border-radius: 12px; /* Rounded edges for control buttons as well */
+      cursor: pointer;
+      font-size: 16px;
+    }
+
+    .controls #add-row {
+      background-color: #007bff;
+      color: white;
+    }
+
+    .controls #remove-row {
+      background-color: #ffc107;
+      color: black;
+    }
+
+    /* Responsive Styles */
+    @media (max-width: 768px) {
+      #container {
+        width: 95%;
+        padding: 15px;
+      }
+
+      .row {
+        flex-direction: column;
+        align-items: center;
+      }
+
+      .row .stopwatch {
+        font-size: 18px;
+        width: auto;
+      }
+
+      .row .task-input {
+        width: 100%;
+        margin: 5px 0;
+      }
+
+      .row button {
+        width: 100%;
+        padding: 10px;
+        font-size: 16px;
+      }
+
+      .controls button {
+        width: 40px;
+      }
+    }
+
+    @media (max-width: 480px) {
+      body {
+        font-size: 14px;
+      }
+
+      #container {
+        width: 100%;
+        padding: 10px;
+      }
+
+      .row .stopwatch {
+        font-size: 16px;
+      }
+
+      .row button {
+        width: 100%;
+        padding: 12px;
+        font-size: 14px;
+      }
+
+      .controls {
+        gap: 10px;
+      }
+
+      .controls button {
+        width: 40px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div id="container">
+    <h1>Task Timer</h1>
+    <div id="rows"></div>
+    <div class="controls">
+      <button id="add-row">+</button>
+      <button id="remove-row">-</button>
+    </div>
+  </div>
+</body>
+</html>
