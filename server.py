@@ -1,119 +1,100 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import sqlite3
+import threading
 import datetime
+import time
 
 app = Flask(__name__)
-CORS(app)  # Enable CORS for frontend communication
+CORS(app)  # Allow frontend to communicate with backend
 
 DB_FILE = "tasks.db"
 
-# Initialize database
+# Create DB table if not exists
 def init_db():
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
-    cursor.execute('''CREATE TABLE IF NOT EXISTS tasks (
-                        date TEXT,
-                        task_name TEXT,
-                        time_spent TEXT)''')
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS tasks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            date TEXT,
+            task_name TEXT,
+            duration TEXT
+        )
+    """)
     conn.commit()
     conn.close()
 
-init_db()  # Ensure the database is ready
+init_db()  # Initialize DB when server starts
 
-# Requirement 1: Send the current date to frontend
-@app.route('/get-date', methods=['GET'])
-def get_date():
+# ✅ Root route for testing
+@app.route("/")
+def home():
+    return "Backend is running!"
+
+# ✅ Get all tasks for today
+@app.route("/tasks", methods=["GET"])
+def get_tasks():
     today = datetime.date.today().strftime("%d/%m/%Y")
-    return jsonify({"date": today})
-
-# Requirement 2: Save tasks into the database
-@app.route('/save-tasks', methods=['POST'])
-def save_tasks():
-    data = request.json  # Expecting a list of tasks
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
-
-    for task in data:
-        cursor.execute("INSERT INTO tasks (date, task_name, time_spent) VALUES (?, ?, ?)",
-                       (task["date"], task["task_name"], task["time_spent"]))
-    
-    conn.commit()
+    cursor.execute("SELECT task_name, duration FROM tasks WHERE date = ?", (today,))
+    tasks = cursor.fetchall()
     conn.close()
-    return jsonify({"message": "Tasks saved successfully!"})
+    return jsonify([{"task_name": t[0], "duration": t[1]} for t in tasks])
 
-# Requirement 3: Load previous session tasks (for data persistence)
-@app.route('/load-tasks', methods=['GET'])
-def load_tasks():
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
+# ✅ Save a task (called when stopwatch updates)
+@app.route("/save_task", methods=["POST"])
+def save_task():
+    data = request.json
+    task_name = data.get("task_name")
+    duration = data.get("duration")
     today = datetime.date.today().strftime("%d/%m/%Y")
 
-    cursor.execute("SELECT task_name, time_spent FROM tasks WHERE date = ?", (today,))
-    tasks = [{"task_name": row[0], "time_spent": row[1]} for row in cursor.fetchall()]
-    
-    conn.close()
-    return jsonify({"tasks": tasks})
+    if not task_name or not duration:
+        return jsonify({"error": "Missing task_name or duration"}), 400
 
-if __name__ == '__main__':
-    app.run(debug=True)
-=======
-from flask import Flask, request, jsonify
-from flask_cors import CORS
-import sqlite3
-import datetime
-
-app = Flask(__name__)
-CORS(app)  # Enable CORS for frontend communication
-
-DB_FILE = "tasks.db"
-
-# Initialize database
-def init_db():
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
-    cursor.execute('''CREATE TABLE IF NOT EXISTS tasks (
-                        date TEXT,
-                        task_name TEXT,
-                        time_spent TEXT)''')
+    cursor.execute("INSERT INTO tasks (date, task_name, duration) VALUES (?, ?, ?)", (today, task_name, duration))
     conn.commit()
     conn.close()
 
-init_db()  # Ensure the database is ready
+    return jsonify({"message": "Task saved!"})
 
-# Requirement 1: Send the current date to frontend
-@app.route('/get-date', methods=['GET'])
-def get_date():
+# ✅ Manual sweep (move all today's tasks to DB)
+@app.route("/manual_sweep", methods=["POST"])
+def manual_sweep():
     today = datetime.date.today().strftime("%d/%m/%Y")
-    return jsonify({"date": today})
 
-# Requirement 2: Save tasks into the database
-@app.route('/save-tasks', methods=['POST'])
-def save_tasks():
-    data = request.json  # Expecting a list of tasks
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
-
-    for task in data:
-        cursor.execute("INSERT INTO tasks (date, task_name, time_spent) VALUES (?, ?, ?)",
-                       (task["date"], task["task_name"], task["time_spent"]))
-    
+    cursor.execute("DELETE FROM tasks WHERE date = ?", (today,))
     conn.commit()
     conn.close()
-    return jsonify({"message": "Tasks saved successfully!"})
 
-# Requirement 3: Load previous session tasks (for data persistence)
-@app.route('/load-tasks', methods=['GET'])
-def load_tasks():
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-    today = datetime.date.today().strftime("%d/%m/%Y")
+    return jsonify({"message": "Manual sweep completed!"})
 
-    cursor.execute("SELECT task_name, time_spent FROM tasks WHERE date = ?", (today,))
-    tasks = [{"task_name": row[0], "time_spent": row[1]} for row in cursor.fetchall()]
-    
-    conn.close()
-    return jsonify({"tasks": tasks})
+# ✅ Auto-sweep at midnight
+def auto_sweep():
+    while True:
+        now = datetime.datetime.now()
+        midnight = datetime.datetime.combine(now.date(), datetime.time(0, 0)) + datetime.timedelta(days=1)
+        seconds_until_midnight = (midnight - now).total_seconds()
+        time.sleep(seconds_until_midnight)
 
-if __name__ == '__main__':
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        today = datetime.date.today().strftime("%d/%m/%Y")
+        cursor.execute("DELETE FROM tasks WHERE date = ?", (today,))
+        conn.commit()
+        conn.close()
+
+        print("Auto-sweep completed at midnight.")
+
+# Start auto-sweep thread
+threading.Thread(target=auto_sweep, daemon=True).start()
+
+# ✅ Run server
+if __name__ == "__main__":
     app.run(debug=True)
