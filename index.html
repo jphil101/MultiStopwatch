@@ -252,7 +252,13 @@
 
         .controls #add-row { background-color: #007bff; color: white; }
         .controls #remove-row { background-color: #ffc107; color: black; }
-
+		.controls #sweep-button { 
+			background-color: #17a2b8; 
+			color: white; 
+			border-radius: 20px; 
+			width: auto; 
+			padding: 8px 15px;
+		}
         @media (max-width: 768px) {
             #container {
                 width: 95%;
@@ -320,6 +326,7 @@
         <div class="controls">
             <button id="add-row">+</button>
             <button id="remove-row">-</button>
+			<button id="sweep-button">Save Progress</button>
         </div>
     </div>
 </body>
