@@ -94,11 +94,64 @@
             return row;
         }
 
-        window.onload = function () {
-            addRow();
-            document.getElementById('add-row').onclick = addRow;
-            document.getElementById('remove-row').onclick = removeRow;
-        };
+	    async function loadDate() {
+        try {
+            const response = await fetch('/api/get_date');
+            const data = await response.json();
+            document.querySelector('h1').textContent = `Ultradian rhythm - ${data.date}`;
+        } catch (err) {
+            console.error('Error loading date:', err);
+        }
+    }
+
+    async function loadTasks() {
+        try {
+            const response = await fetch('/api/get_tasks');
+            const tasks = await response.json();
+            const rowsContainer = document.getElementById('rows');
+            rowsContainer.innerHTML = ''; // Clear existing rows
+
+            tasks.forEach(task => {
+                const row = createRow();
+                row.querySelector('.task-input').value = task.task_name;
+                row.querySelector('.stopwatch').textContent = task.elapsed_time;
+                rowsContainer.appendChild(row);
+            });
+        } catch (err) {
+            console.error('Error loading tasks:', err);
+        }
+    }
+
+    async function sweepTasks() {
+        if (!confirm("Are you sure you want to sweep today's data into the DB?")) return;
+        const rows = document.querySelectorAll('.row');
+        const tasks = Array.from(rows).map(row => ({
+            task_name: row.querySelector('.task-input').value,
+            elapsed_time: row.querySelector('.stopwatch').textContent
+        }));
+
+        try {
+            const response = await fetch('/api/save_tasks', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(tasks)
+            });
+            const result = await response.json();
+            alert(result.message || 'Tasks saved successfully!');
+        } catch (err) {
+            console.error('Error saving tasks:', err);
+            alert('Error saving tasks.');
+        }
+    }
+
+    window.onload = function () {
+        loadDate();
+        loadTasks();
+        document.getElementById('add-row').onclick = addRow;
+        document.getElementById('remove-row').onclick = removeRow;
+        document.getElementById('sweep-button').onclick = sweepTasks;
+    };
+	
     </script>
     <style>
         body {
@@ -271,3 +324,5 @@
     </div>
 </body>
 </html>
+
+<!-- Dummy change to force push -->
