@@ -3,6 +3,9 @@ import json
 import datetime
 from http.server import BaseHTTPRequestHandler
 from supabase import create_client, Client
+from dotenv import load_dotenv
+
+load_dotenv()  # Load environment variables
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
@@ -27,14 +30,24 @@ class handler(BaseHTTPRequestHandler):
         
         today = datetime.date.today().strftime("%d/%m/%Y")
 
-        rows = [{"date": today, "task_name": task.get("task_name"), "elapsed_time": task.get("elapsed_time")} for task in tasks]
-        result = supabase.table("tasks").insert(rows).execute()
+        for task in tasks:
+            task_name = task.get("task_name")
+            elapsed_time = task.get("elapsed_time")
+            created_at = datetime.datetime.utcnow().isoformat()  # Current timestamp
 
-        if result.error:
-            self.send_response(500)
-            self.end_headers()
-            self.wfile.write(f"Error saving tasks: {result.error}".encode())
-            return
+            # Use UPSERT to update if task_name & date already exist
+            result = supabase.table("tasks").upsert({
+                "date": today,
+                "task_name": task_name,
+                "elapsed_time": elapsed_time,
+                "created_at": created_at  # Update created_at on each save
+            }, on_conflict=["date", "task_name"]).execute()
+
+            if result.error:
+                self.send_response(500)
+                self.end_headers()
+                self.wfile.write(f"Error saving tasks: {result.error}".encode())
+                return
 
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
