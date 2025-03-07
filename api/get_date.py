@@ -1,10 +1,15 @@
 import datetime
 import json
+from http.server import BaseHTTPRequestHandler
 
-def handler(request):
-    today = datetime.date.today().strftime("%d/%m/%Y")
-    return {
-        "statusCode": 200,
-        "body": json.dumps({"date": today}),
-        "headers": {"Content-Type": "application/json"}
-    }
+class handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        today = datetime.date.today().strftime("%d/%m/%Y")
+        response = {
+            "date": today
+        }
+
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(json.dumps(response).encode())
