@@ -4,10 +4,13 @@ import datetime
 from supabase import create_client, Client
 
 # Initialize the Supabase client using env variables.
-SUPABASE_URL = os.environ.get("https://untbyduhxszwtvhoydds.supabase.co")
-SUPABASE_KEY = os.environ.get("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVudGJ5ZHVoeHN6d3R2aG95ZGRzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3MzkwMjg3MTMsImV4cCI6MjA1NDYwNDcxM30.e6Ok23sZFaxrC2XokeJerFlnDi541_BZ0ybwF_lWZ58")
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+SUPABASE_URL = os.environ.get("SUPABASE_URL")  # Get value from environment
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 
+if not SUPABASE_URL or not SUPABASE_KEY:
+    raise ValueError("Missing Supabase environment variables!")
+
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 def handler(request):
     today = datetime.date.today().strftime("%d/%m/%Y")
     # Query the tasks table where date matches today
