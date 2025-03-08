@@ -11,6 +11,7 @@
                 this.elapsedTime = 0;
                 this.timerInterval = null;
                 this.displayElement = displayElement;
+                this.isRunning = false;
             }
 
             formatTime(milliseconds) {
@@ -23,16 +24,49 @@
 
             start() {
                 if (this.timerInterval) return;
+                
+                // Stop all other running timers
+                const allRows = document.querySelectorAll('.row');
+                allRows.forEach(row => {
+                    const otherStartBtn = row.querySelector('.start-btn');
+                    const otherStopBtn = row.querySelector('.stop-btn');
+                    if (otherStartBtn.disabled && otherStartBtn !== this.startButton) {
+                        const otherStopwatch = row.stopwatch;
+                        otherStopwatch.stop();
+                    }
+                });
+                
                 this.startTime = Date.now() - this.elapsedTime;
                 this.timerInterval = setInterval(() => {
                     this.elapsedTime = Date.now() - this.startTime;
                     this.displayElement.textContent = this.formatTime(this.elapsedTime);
                 }, 10);
+                
+                this.isRunning = true;
+                
+                // Update button states
+                if (this.startButton) {
+                    this.startButton.disabled = true;
+                    this.stopButton.disabled = false;
+                    
+                    // Add visual indication
+                    this.rowElement.classList.add('running');
+                }
             }
 
             stop() {
                 clearInterval(this.timerInterval);
                 this.timerInterval = null;
+                this.isRunning = false;
+                
+                // Update button states
+                if (this.startButton) {
+                    this.startButton.disabled = false;
+                    this.stopButton.disabled = false;
+                    
+                    // Remove visual indication
+                    this.rowElement.classList.remove('running');
+                }
             }
 
             reset() {
@@ -46,12 +80,19 @@
             const rowContainer = document.getElementById('rows');
             const row = createRow();
             rowContainer.appendChild(row);
+            updateLocalStorage();
         }
 
         function removeRow() {
             const rowContainer = document.getElementById('rows');
             if (rowContainer.children.length > 1) {
-                rowContainer.removeChild(rowContainer.lastChild);
+                // Stop timer if running
+                const lastRow = rowContainer.lastChild;
+                if (lastRow.stopwatch && lastRow.stopwatch.isRunning) {
+                    lastRow.stopwatch.stop();
+                }
+                rowContainer.removeChild(lastRow);
+                updateLocalStorage();
             }
         }
 
@@ -67,6 +108,15 @@
             taskInput.type = 'text';
             taskInput.placeholder = 'Task Name';
             taskInput.className = 'task-input';
+            // Prevent form submission on Enter
+            taskInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    taskInput.blur();
+                }
+            });
+            // Save to local storage when input changes
+            taskInput.addEventListener('input', updateLocalStorage);
 
             const startButton = document.createElement('button');
             startButton.textContent = 'Start';
@@ -75,15 +125,26 @@
             const stopButton = document.createElement('button');
             stopButton.textContent = 'Stop';
             stopButton.className = 'stop-btn';
+            stopButton.disabled = true;
 
             const resetButton = document.createElement('button');
             resetButton.textContent = 'Reset';
             resetButton.className = 'reset-btn';
 
             const stopwatch = new Stopwatch(stopwatchDisplay);
+            stopwatch.rowElement = row;
+            stopwatch.startButton = startButton;
+            stopwatch.stopButton = stopButton;
+            
             startButton.onclick = () => stopwatch.start();
             stopButton.onclick = () => stopwatch.stop();
-            resetButton.onclick = () => stopwatch.reset();
+            resetButton.onclick = () => {
+                stopwatch.reset();
+                updateLocalStorage();
+            };
+            
+            // Store stopwatch reference on the row element
+            row.stopwatch = stopwatch;
 
             row.appendChild(stopwatchDisplay);
             row.appendChild(taskInput);
@@ -94,64 +155,248 @@
             return row;
         }
 
-	    async function loadDate() {
-        try {
-            const response = await fetch('/api/get_date');
-            const data = await response.json();
-            document.querySelector('h1').textContent = `Ultradian rhythm - ${data.date}`;
-        } catch (err) {
-            console.error('Error loading date:', err);
+        function updateLocalStorage() {
+            const rows = document.querySelectorAll('.row');
+            const tasks = Array.from(rows).map(row => ({
+                task_name: row.querySelector('.task-input').value,
+                elapsed_time: row.querySelector('.stopwatch').textContent
+            }));
+            
+            try {
+                localStorage.setItem('taskTimers', JSON.stringify(tasks));
+            } catch (err) {
+                console.error('Error saving to local storage:', err);
+            }
         }
-    }
 
-    async function loadTasks() {
-        try {
-            const response = await fetch('/api/get_tasks');
-            const tasks = await response.json();
-            const rowsContainer = document.getElementById('rows');
-            rowsContainer.innerHTML = ''; // Clear existing rows
+        function loadFromLocalStorage() {
+            try {
+                const saved = localStorage.getItem('taskTimers');
+                if (saved) {
+                    const tasks = JSON.parse(saved);
+                    const rowsContainer = document.getElementById('rows');
+                    rowsContainer.innerHTML = ''; // Clear existing rows
 
-            tasks.forEach(task => {
-                const row = createRow();
-                row.querySelector('.task-input').value = task.task_name;
-                row.querySelector('.stopwatch').textContent = task.elapsed_time;
-                rowsContainer.appendChild(row);
+                    tasks.forEach(task => {
+                        const row = createRow();
+                        row.querySelector('.task-input').value = task.task_name;
+                        row.querySelector('.stopwatch').textContent = task.elapsed_time;
+                        rowsContainer.appendChild(row);
+                    });
+                    
+                    // If no tasks loaded, create a default row
+                    if (tasks.length === 0) {
+                        addRow();
+                    }
+                } else {
+                    // If nothing in local storage, add default row
+                    addRow();
+                }
+            } catch (err) {
+                console.error('Error loading from local storage:', err);
+                // Add a default row if loading fails
+                addRow();
+            }
+        }
+
+        async function loadDate() {
+            try {
+                const response = await fetch('/api/get_date');
+                const data = await response.json();
+                document.querySelector('h1').textContent = `Ultradian rhythm - ${data.date}`;
+            } catch (err) {
+                console.error('Error loading date:', err);
+                // Show fallback date if API fails
+                const today = new Date().toLocaleDateString();
+                document.querySelector('h1').textContent = `Ultradian rhythm - ${today}`;
+                showNotification('Could not load date from server', 'error');
+            }
+        }
+
+        async function loadTasks() {
+            try {
+                const response = await fetch('/api/get_tasks');
+                if (!response.ok) {
+                    throw new Error(`Server returned ${response.status}`);
+                }
+                const tasks = await response.json();
+                const rowsContainer = document.getElementById('rows');
+                rowsContainer.innerHTML = ''; // Clear existing rows
+
+                if (tasks.length === 0) {
+                    // If no tasks from server, try local storage
+                    loadFromLocalStorage();
+                    return;
+                }
+
+                tasks.forEach(task => {
+                    const row = createRow();
+                    row.querySelector('.task-input').value = task.task_name;
+                    row.querySelector('.stopwatch').textContent = task.elapsed_time;
+                    rowsContainer.appendChild(row);
+                });
+                
+                // Sync to local storage
+                updateLocalStorage();
+            } catch (err) {
+                console.error('Error loading tasks:', err);
+                showNotification('Could not load tasks from server. Loading from local storage...', 'warning');
+                loadFromLocalStorage();
+            }
+        }
+
+        async function sweepTasks() {
+            if (!confirm("Are you sure you want to sweep today's data into the DB?")) return;
+            
+            // Show debug panel if it exists
+            const debugPanel = document.getElementById('debug-panel');
+            if (debugPanel) debugPanel.style.display = 'block';
+            
+            // Log to debug panel
+            function logDebug(message) {
+                if (debugPanel) {
+                    const time = new Date().toLocaleTimeString();
+                    debugPanel.innerHTML += `<div>[${time}] ${message}</div>`;
+                    debugPanel.scrollTop = debugPanel.scrollHeight;
+                }
+                console.log(message);
+            }
+            
+            logDebug("Starting task save...");
+            
+            // Validate input before saving
+            const rows = document.querySelectorAll('.row');
+            let hasEmptyTasks = false;
+            
+            rows.forEach(row => {
+                const taskName = row.querySelector('.task-input').value.trim();
+                if (taskName === '') {
+                    hasEmptyTasks = true;
+                    row.querySelector('.task-input').classList.add('error');
+                } else {
+                    row.querySelector('.task-input').classList.remove('error');
+                }
             });
-        } catch (err) {
-            console.error('Error loading tasks:', err);
-        }
-    }
-
-    async function sweepTasks() {
-        if (!confirm("Are you sure you want to sweep today's data into the DB?")) return;
-        const rows = document.querySelectorAll('.row');
-        const tasks = Array.from(rows).map(row => ({
-            task_name: row.querySelector('.task-input').value,
-            elapsed_time: row.querySelector('.stopwatch').textContent
-        }));
-
-        try {
-            const response = await fetch('/api/save_tasks', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(tasks)
+            
+            if (hasEmptyTasks) {
+                showNotification('Please fill in all task names before saving', 'error');
+                logDebug("Task save aborted: Empty task names found");
+                return;
+            }
+            
+            // Stop all running timers before save
+            rows.forEach(row => {
+                if (row.stopwatch && row.stopwatch.isRunning) {
+                    row.stopwatch.stop();
+                }
             });
-            const result = await response.json();
-            alert(result.message || 'Tasks saved successfully!');
-        } catch (err) {
-            console.error('Error saving tasks:', err);
-            alert('Error saving tasks.');
-        }
-    }
+            
+            const tasks = Array.from(rows).map(row => ({
+                task_name: row.querySelector('.task-input').value.trim(),
+                elapsed_time: row.querySelector('.stopwatch').textContent
+            }));
+            
+            logDebug(`Found ${tasks.length} tasks to save`);
+            logDebug(`Task data: ${JSON.stringify(tasks)}`);
 
-    window.onload = function () {
-        loadDate();
-        loadTasks();
-        document.getElementById('add-row').onclick = addRow;
-        document.getElementById('remove-row').onclick = removeRow;
-        document.getElementById('sweep-button').onclick = sweepTasks;
-    };
-	
+            // Disable save button during operation
+            const saveButton = document.getElementById('sweep-button');
+            saveButton.disabled = true;
+            saveButton.textContent = 'Saving...';
+            
+            try {
+                logDebug("Sending request to /api/save_tasks...");
+                const response = await fetch('/api/save_tasks', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(tasks)
+                });
+                
+                logDebug(`Response status: ${response.status}`);
+                
+                // Get response as text first
+                const responseText = await response.text();
+                logDebug(`Raw response: ${responseText}`);
+                
+                // Try to parse as JSON
+                let result;
+                try {
+                    result = JSON.parse(responseText);
+                    logDebug(`Parsed response: ${JSON.stringify(result)}`);
+                } catch (e) {
+                    logDebug(`Error parsing response as JSON: ${e.message}`);
+                    showNotification(`Server returned invalid JSON: ${responseText}`, 'error');
+                    return;
+                }
+                
+                if (response.ok) {
+                    logDebug("Save successful!");
+                    showNotification(result.message || 'Tasks saved successfully!', 'success');
+                } else {
+                    logDebug(`Error ${response.status}: ${result.error || 'Unknown error'}`);
+                    showNotification(`Error (${response.status}): ${result.error || 'Unknown error'}`, 'error');
+                }
+            } catch (err) {
+                logDebug(`Network error: ${err.message}`);
+                console.error('Error saving tasks:', err);
+                showNotification(`Network error: ${err.message}`, 'error');
+            } finally {
+                // Re-enable save button
+                saveButton.disabled = false;
+                saveButton.textContent = 'Save Progress';
+            }
+        }
+        
+        function showNotification(message, type = 'info') {
+            // Create notification element if not exists
+            let notificationArea = document.getElementById('notification-area');
+            if (!notificationArea) {
+                notificationArea = document.createElement('div');
+                notificationArea.id = 'notification-area';
+                document.body.appendChild(notificationArea);
+            }
+            
+            const notification = document.createElement('div');
+            notification.className = `notification ${type}`;
+            notification.textContent = message;
+            
+            notificationArea.appendChild(notification);
+            
+            // Auto remove after 5 seconds
+            setTimeout(() => {
+                notification.classList.add('fade-out');
+                setTimeout(() => {
+                    notification.remove();
+                }, 500);
+            }, 5000);
+        }
+
+        window.onload = function () {
+            loadDate();
+            loadTasks();
+            document.getElementById('add-row').onclick = addRow;
+            document.getElementById('remove-row').onclick = removeRow;
+            document.getElementById('sweep-button').onclick = sweepTasks;
+            
+            // Add keyboard shortcuts
+            document.addEventListener('keydown', function(e) {
+                // Ctrl+S to save
+                if (e.ctrlKey && e.key === 's') {
+                    e.preventDefault();
+                    sweepTasks();
+                }
+                // Alt+A to add row
+                if (e.altKey && e.key === 'a') {
+                    e.preventDefault();
+                    addRow();
+                }
+                // Alt+D to delete row
+                if (e.altKey && e.key === 'd') {
+                    e.preventDefault();
+                    removeRow();
+                }
+            });
+        };
     </script>
     <style>
         body {
@@ -193,6 +438,12 @@
             border-radius: 5px;
             box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
             background: #fff;
+            transition: background-color 0.3s ease;
+        }
+        
+        .row.running {
+            background-color: #e6f7ff; /* Light blue background for running timer */
+            border-left: 4px solid #1890ff;
         }
 
         .stopwatch {
@@ -211,6 +462,12 @@
             font-size: 14px;
             min-width: 120px;
             margin-right: 5px;
+            transition: border-color 0.3s;
+        }
+        
+        .task-input.error {
+            border-color: #dc3545;
+            background-color: #fff8f8;
         }
 
         button {
@@ -221,8 +478,13 @@
             cursor: pointer;
             transition: 0.2s;
         }
+        
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
 
-        button:hover {
+        button:hover:not(:disabled) {
             opacity: 0.8;
         }
 
@@ -252,13 +514,82 @@
 
         .controls #add-row { background-color: #007bff; color: white; }
         .controls #remove-row { background-color: #ffc107; color: black; }
-		.controls #sweep-button { 
-			background-color: #17a2b8; 
-			color: white; 
-			border-radius: 20px; 
-			width: auto; 
-			padding: 8px 15px;
-		}
+        .controls #sweep-button { 
+            background-color: #17a2b8; 
+            color: white; 
+            border-radius: 20px; 
+            width: auto; 
+            padding: 8px 15px;
+        }
+        
+        /* Notification styles */
+        #notification-area {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            z-index: 10000;
+            display: flex;
+            flex-direction: column;
+            align-items: flex-end;
+            gap: 10px;
+        }
+        
+        .notification {
+            padding: 12px 20px;
+            border-radius: 4px;
+            color: white;
+            box-shadow: 0 3px 6px rgba(0,0,0,0.16);
+            animation: slide-in 0.3s ease-out forwards;
+            max-width: 300px;
+        }
+        
+        .notification.info {
+            background-color: #2196F3;
+        }
+        
+        .notification.success {
+            background-color: #4CAF50;
+        }
+        
+        .notification.warning {
+            background-color: #FF9800;
+        }
+        
+        .notification.error {
+            background-color: #f44336;
+        }
+        
+        .notification.fade-out {
+            animation: fade-out 0.5s ease-out forwards;
+        }
+        
+        @keyframes slide-in {
+            from { transform: translateX(100%); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+        
+        @keyframes fade-out {
+            from { opacity: 1; }
+            to { opacity: 0; }
+        }
+
+        /* Help tooltip */
+        .keyboard-shortcuts {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            font-size: 12px;
+            color: #aaa;
+            background: rgba(0,0,0,0.7);
+            padding: 5px 10px;
+            border-radius: 4px;
+            display: none;
+        }
+        
+        #container:hover .keyboard-shortcuts {
+            display: block;
+        }
+
         @media (max-width: 768px) {
             #container {
                 width: 95%;
@@ -284,10 +615,22 @@
                 width: 100%;
                 padding: 10px;
                 font-size: 16px;
+                min-height: 44px; /* Better for touch targets */
             }
 
             .controls button {
-                width: 40px;
+                width: 44px;
+                height: 44px;
+            }
+            
+            .controls #sweep-button {
+                width: auto;
+                height: auto;
+                flex-grow: 1;
+            }
+            
+            .keyboard-shortcuts {
+                display: none !important; /* Hide shortcuts on mobile */
             }
         }
 
@@ -314,7 +657,8 @@
             }
 
             .controls button {
-                width: 40px;
+                width: 44px;
+                height: 44px;
             }
         }
     </style>
@@ -324,12 +668,31 @@
         <h1>Ultradian rhythm</h1>
         <div id="rows"></div>
         <div class="controls">
-            <button id="add-row">+</button>
-            <button id="remove-row">-</button>
-			<button id="sweep-button">Save Progress</button>
+            <button id="add-row" title="Add row (Alt+A)">+</button>
+            <button id="remove-row" title="Remove row (Alt+D)">-</button>
+            <button id="sweep-button" title="Save Progress (Ctrl+S)">Save Progress</button>
+        </div>
+        <div class="keyboard-shortcuts">
+            Shortcuts: Ctrl+S (Save) | Alt+A (Add) | Alt+D (Delete)
         </div>
     </div>
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            // Create debug panel
+            const debugPanel = document.createElement('div');
+            debugPanel.id = 'debug-panel';
+            debugPanel.style.cssText = 'display:none; position:fixed; bottom:10px; right:10px; width:400px; height:200px; background:rgba(0,0,0,0.8); color:lime; font-family:monospace; font-size:12px; padding:10px; overflow:auto; z-index:9999; border-radius:5px;';
+            document.body.appendChild(debugPanel);
+            
+            // Add debug toggle button
+            const debugButton = document.createElement('button');
+            debugButton.textContent = 'Debug';
+            debugButton.style.cssText = 'position:fixed; bottom:10px; right:10px; z-index:10000; background:#333; color:white; border:none; border-radius:5px; padding:5px 10px;';
+            debugButton.onclick = function() {
+                debugPanel.style.display = debugPanel.style.display === 'none' ? 'block' : 'none';
+            };
+            document.body.appendChild(debugButton);
+        });
+    </script>
 </body>
 </html>
-
-<!-- Dummy change to force push -->
