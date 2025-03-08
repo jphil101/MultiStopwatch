@@ -13,7 +13,6 @@ def log(message):
 # Load environment variables
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-
 log(f"SUPABASE_URL defined: {bool(SUPABASE_URL)}")
 log(f"SUPABASE_KEY defined: {bool(SUPABASE_KEY)}")
 
@@ -71,24 +70,26 @@ class handler(BaseHTTPRequestHandler):
                     "created_at": datetime.datetime.utcnow().isoformat()
                 })
             
-            log(f"Prepared {len(rows)} rows for upsert")
+            log(f"Prepared {len(rows)} rows for insertion")
             
             if rows:
-                log("Attempting Supabase upsert...")
-                # Use the correct upsert method
-                result = supabase.table("tasks").upsert(
-                    rows,
-                    on_conflict=["date", "task_name"]
-                ).execute()
+                log("Attempting to delete existing tasks for today first...")
+                # Delete existing tasks for today before inserting new ones
+                delete_result = supabase.table("tasks").delete().eq("date", today).execute()
+                log(f"Delete result: {delete_result}")
                 
-                log(f"Upsert result: {result}")
+                log("Now inserting new tasks...")
+                # Simple insert without upsert
+                result = supabase.table("tasks").insert(rows).execute()
+                
+                log(f"Insert result: {result}")
                 
                 # Proper error checking
                 if hasattr(result, 'error') and result.error:
-                    log(f"ERROR in upsert: {result.error}")
+                    log(f"ERROR in insert: {result.error}")
                     raise Exception(f"Supabase error: {result.error}")
                 
-                log("Upsert successful")
+                log("Insert successful")
             else:
                 log("No valid rows to insert")
             
