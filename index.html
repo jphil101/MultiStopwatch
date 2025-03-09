@@ -96,64 +96,71 @@
             }
         }
 
-        function createRow() {
-            const row = document.createElement('div');
-            row.className = 'row';
+		// Update the createRow function to handle existing timer values
+		function createRow(existingTime = '00:00.00') {
+			const row = document.createElement('div');
+			row.className = 'row';
 
-            const stopwatchDisplay = document.createElement('span');
-            stopwatchDisplay.textContent = '00:00.00';
-            stopwatchDisplay.className = 'stopwatch';
+			const stopwatchDisplay = document.createElement('span');
+			stopwatchDisplay.textContent = existingTime;
+			stopwatchDisplay.className = 'stopwatch';
 
-            const taskInput = document.createElement('input');
-            taskInput.type = 'text';
-            taskInput.placeholder = 'Task Name';
-            taskInput.className = 'task-input';
-            // Prevent form submission on Enter
-            taskInput.addEventListener('keydown', (e) => {
-                if (e.key === 'Enter') {
-                    e.preventDefault();
-                    taskInput.blur();
-                }
-            });
-            // Save to local storage when input changes
-            taskInput.addEventListener('input', updateLocalStorage);
+			const taskInput = document.createElement('input');
+			taskInput.type = 'text';
+			taskInput.placeholder = 'Task Name';
+			taskInput.className = 'task-input';
+			
+			// Prevent form submission on Enter
+			taskInput.addEventListener('keydown', (e) => {
+				if (e.key === 'Enter') {
+					e.preventDefault();
+					taskInput.blur();
+				}
+			});
+			
+			// Save to local storage when input changes
+			taskInput.addEventListener('input', updateLocalStorage);
 
-            const startButton = document.createElement('button');
-            startButton.textContent = 'Start';
-            startButton.className = 'start-btn';
+			const startButton = document.createElement('button');
+			startButton.textContent = 'Start';
+			startButton.className = 'start-btn';
 
-            const stopButton = document.createElement('button');
-            stopButton.textContent = 'Stop';
-            stopButton.className = 'stop-btn';
-            stopButton.disabled = true;
+			const stopButton = document.createElement('button');
+			stopButton.textContent = 'Stop';
+			stopButton.className = 'stop-btn';
+			stopButton.disabled = true;
 
-            const resetButton = document.createElement('button');
-            resetButton.textContent = 'Reset';
-            resetButton.className = 'reset-btn';
+			const resetButton = document.createElement('button');
+			resetButton.textContent = 'Reset';
+			resetButton.className = 'reset-btn';
 
-            const stopwatch = new Stopwatch(stopwatchDisplay);
-            stopwatch.rowElement = row;
-            stopwatch.startButton = startButton;
-            stopwatch.stopButton = stopButton;
-            
-            startButton.onclick = () => stopwatch.start();
-            stopButton.onclick = () => stopwatch.stop();
-            resetButton.onclick = () => {
-                stopwatch.reset();
-                updateLocalStorage();
-            };
-            
-            // Store stopwatch reference on the row element
-            row.stopwatch = stopwatch;
+			const stopwatch = new Stopwatch(stopwatchDisplay);
+			stopwatch.rowElement = row;
+			stopwatch.startButton = startButton;
+			stopwatch.stopButton = stopButton;
+			
+			// Add event listeners for buttons
+			startButton.addEventListener('click', () => stopwatch.start());
+			stopButton.addEventListener('click', () => stopwatch.stop());
+			resetButton.addEventListener('click', () => stopwatch.reset());
+			
+			// Store stopwatch reference on the row element
+			row.stopwatch = stopwatch;
 
-            row.appendChild(stopwatchDisplay);
-            row.appendChild(taskInput);
-            row.appendChild(startButton);
-            row.appendChild(stopButton);
-            row.appendChild(resetButton);
+			// If there's an existing time, set the elapsed time in the stopwatch
+			if (existingTime !== '00:00.00') {
+				stopwatch.elapsedTime = timeStringToMilliseconds(existingTime);
+			}
 
-            return row;
-        }
+			row.appendChild(stopwatchDisplay);
+			row.appendChild(taskInput);
+			row.appendChild(startButton);
+			row.appendChild(stopButton);
+			row.appendChild(resetButton);
+
+			return row;
+		}
+
 
         function updateLocalStorage() {
             const rows = document.querySelectorAll('.row');
@@ -169,35 +176,45 @@
             }
         }
 
-        function loadFromLocalStorage() {
-            try {
-                const saved = localStorage.getItem('taskTimers');
-                if (saved) {
-                    const tasks = JSON.parse(saved);
-                    const rowsContainer = document.getElementById('rows');
-                    rowsContainer.innerHTML = ''; // Clear existing rows
+		function loadFromLocalStorage() {
+			try {
+				const saved = localStorage.getItem('taskTimers');
+				if (saved) {
+					const tasks = JSON.parse(saved);
+					const rowsContainer = document.getElementById('rows');
+					rowsContainer.innerHTML = ''; // Clear existing rows
 
-                    tasks.forEach(task => {
-                        const row = createRow();
-                        row.querySelector('.task-input').value = task.task_name;
-                        row.querySelector('.stopwatch').textContent = task.elapsed_time;
-                        rowsContainer.appendChild(row);
-                    });
-                    
-                    // If no tasks loaded, create a default row
-                    if (tasks.length === 0) {
-                        addRow();
-                    }
-                } else {
-                    // If nothing in local storage, add default row
-                    addRow();
-                }
-            } catch (err) {
-                console.error('Error loading from local storage:', err);
-                // Add a default row if loading fails
-                addRow();
-            }
-        }
+					tasks.forEach(task => {
+						const row = createRow(task.elapsed_time);
+						row.querySelector('.task-input').value = task.task_name;
+						rowsContainer.appendChild(row);
+					});
+					
+					// If no tasks loaded, create a default row
+					if (tasks.length === 0) {
+						addRow();
+					}
+				} else {
+					// If nothing in local storage, add default row
+					addRow();
+				}
+			} catch (err) {
+				console.error('Error loading from local storage:', err);
+				// Add a default row if loading fails
+				addRow();
+			}
+		}
+		function timeStringToMilliseconds(timeString) {
+			const [minutesSeconds, milliseconds] = timeString.split('.');
+			const [minutes, seconds] = minutesSeconds.split(':');
+			
+			return (
+				parseInt(minutes) * 60 * 1000 +
+				parseInt(seconds) * 1000 +
+				parseInt(milliseconds) * 10
+			);
+		}
+
 
         async function loadDate() {
             try {
@@ -213,37 +230,36 @@
             }
         }
 
-        async function loadTasks() {
-            try {
-                const response = await fetch('/api/get_tasks');
-                if (!response.ok) {
-                    throw new Error(`Server returned ${response.status}`);
-                }
-                const tasks = await response.json();
-                const rowsContainer = document.getElementById('rows');
-                rowsContainer.innerHTML = ''; // Clear existing rows
+		async function loadTasks() {
+			try {
+				const response = await fetch('/api/get_tasks');
+				if (!response.ok) {
+					throw new Error(`Server returned ${response.status}`);
+				}
+				const tasks = await response.json();
+				const rowsContainer = document.getElementById('rows');
+				rowsContainer.innerHTML = ''; // Clear existing rows
 
-                if (tasks.length === 0) {
-                    // If no tasks from server, try local storage
-                    loadFromLocalStorage();
-                    return;
-                }
+				if (tasks.length === 0) {
+					// If no tasks from server, try local storage
+					loadFromLocalStorage();
+					return;
+				}
 
-                tasks.forEach(task => {
-                    const row = createRow();
-                    row.querySelector('.task-input').value = task.task_name;
-                    row.querySelector('.stopwatch').textContent = task.elapsed_time;
-                    rowsContainer.appendChild(row);
-                });
-                
-                // Sync to local storage
-                updateLocalStorage();
-            } catch (err) {
-                console.error('Error loading tasks:', err);
-                showNotification('Could not load tasks from server. Loading from local storage...', 'warning');
-                loadFromLocalStorage();
-            }
-        }
+				tasks.forEach(task => {
+					const row = createRow(task.elapsed_time);
+					row.querySelector('.task-input').value = task.task_name;
+					rowsContainer.appendChild(row);
+				});
+				
+				// Sync to local storage
+				updateLocalStorage();
+			} catch (err) {
+				console.error('Error loading tasks:', err);
+				showNotification('Could not load tasks from server. Loading from local storage...', 'warning');
+				loadFromLocalStorage();
+			}
+		}
 
         async function sweepTasks() {
             if (!confirm("Are you sure you want to sweep today's data into the DB?")) return;
