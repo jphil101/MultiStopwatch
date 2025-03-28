@@ -240,7 +240,9 @@
 			}));
 
 			try {
-				const response = await fetch('/api/auto_save_tasks', {
+                // ***** CORRECTED LINE *****
+				const response = await fetch('/api/save_tasks', {
+                // ***** END CORRECTION *****
 					method: 'POST',
 					headers: { 'Content-Type': 'application/json' },
 					body: JSON.stringify(tasks)
