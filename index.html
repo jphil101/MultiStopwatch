@@ -5,6 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Task Timers</title>
     <script defer>
+        // ===========================================================
+        // START: JAVASCRIPT LOGIC FOR PERSISTENCE (FROM PREVIOUS)
+        // ===========================================================
+
+        // --- Stopwatch Class (Copied from previous working version) ---
         class Stopwatch {
             constructor(displayElement) {
                 this.startTime = null;
@@ -12,892 +17,1001 @@
                 this.timerInterval = null;
                 this.displayElement = displayElement;
                 this.isRunning = false;
+                 // References added in createRow
+                this.rowElement = null;
+                this.startButton = null;
+                this.stopButton = null;
+                this.resetButton = null; // Added reference for completeness
             }
 
             formatTime(milliseconds) {
                 const totalSeconds = Math.floor(milliseconds / 1000);
                 const minutes = Math.floor(totalSeconds / 60);
                 const seconds = totalSeconds % 60;
-                const ms = Math.floor((milliseconds % 1000) / 10);
+                const ms = Math.floor((milliseconds % 1000) / 10); // Two digits for ms
                 return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}.${ms.toString().padStart(2, '0')}`;
             }
 
             start() {
-                if (this.timerInterval) return;
-                
+                if (this.timerInterval) return; // Already running
+
                 // Stop all other running timers
                 const allRows = document.querySelectorAll('.row');
                 allRows.forEach(row => {
-                    const otherStartBtn = row.querySelector('.start-btn');
-                    const otherStopBtn = row.querySelector('.stop-btn');
-                    if (otherStartBtn.disabled && otherStartBtn !== this.startButton) {
-                        const otherStopwatch = row.stopwatch;
-                        otherStopwatch.stop();
+                    // Check if it's a different row and its stopwatch is running
+                    if (row !== this.rowElement && row.stopwatch && row.stopwatch.isRunning) {
+                         console.log(`Stopping timer in row: ${row.querySelector('.task-input')?.value || 'Untitled'}`);
+                        row.stopwatch.stop();
                     }
                 });
-                
+
                 this.startTime = Date.now() - this.elapsedTime;
                 this.timerInterval = setInterval(() => {
                     this.elapsedTime = Date.now() - this.startTime;
                     this.displayElement.textContent = this.formatTime(this.elapsedTime);
-                }, 10);
-                
+                }, 10); // Update every 10ms for smooth display
+
                 this.isRunning = true;
-                
-                // Update button states
-                if (this.startButton) {
-                    this.startButton.disabled = true;
-                    this.stopButton.disabled = false;
-                    
-                    // Add visual indication
-                    this.rowElement.classList.add('running');
-                }
+
+                // Update button states and visual indication
+                if (this.startButton) this.startButton.disabled = true;
+                if (this.stopButton) this.stopButton.disabled = false;
+                if (this.resetButton) this.resetButton.disabled = false; // Enable reset when running
+                if (this.rowElement) this.rowElement.classList.add('running');
+                updateLocalStorage(); // Save state when timer starts
             }
 
             stop() {
+                 if (!this.timerInterval) return; // Already stopped
                 clearInterval(this.timerInterval);
                 this.timerInterval = null;
                 this.isRunning = false;
-                
-                // Update button states
-                if (this.startButton) {
-                    this.startButton.disabled = false;
-                    this.stopButton.disabled = false;
-                    
-                    // Remove visual indication
-                    this.rowElement.classList.remove('running');
-                }
+
+                // Update button states and visual indication
+                if (this.startButton) this.startButton.disabled = false;
+                // Keep stop button enabled after stopping if there's elapsed time
+                if (this.stopButton) this.stopButton.disabled = this.elapsedTime === 0;
+                if (this.resetButton) this.resetButton.disabled = this.elapsedTime === 0;
+                if (this.rowElement) this.rowElement.classList.remove('running');
+                updateLocalStorage(); // Save state when timer stops
             }
 
             reset() {
-                this.stop();
+                const wasRunning = this.isRunning;
+                this.stop(); // Stop first
                 this.elapsedTime = 0;
                 this.displayElement.textContent = this.formatTime(this.elapsedTime);
+                // Reset button states
+                 if (this.startButton) this.startButton.disabled = false;
+                 if (this.stopButton) this.stopButton.disabled = true; // Stop disabled after reset
+                 if (this.resetButton) this.resetButton.disabled = true; // Reset disabled after reset
+                 if (wasRunning) updateLocalStorage(); // Save state only if it was running before reset
+                 else if (this.rowElement?.parentNode) updateLocalStorage(); // Save even if not running if row exists
             }
         }
 
+        // --- Global Variables for Backup State ---
+        let fetchedLastBackupISOString = null; // Store ISO string from DB
+        let sessionLastBackupTime = null;      // Store Date object from current session's backup
+        let nextScheduledBackup = null;
+        let backupTimeout = null; // Keep track of the timeout ID
+
+        // --- Core Functions (Add/Remove/Create Row - Adjusted slightly for robustness) ---
         function addRow() {
             const rowContainer = document.getElementById('rows');
-            const row = createRow();
+            const row = createRow(); // Create with default time and no name
             rowContainer.appendChild(row);
-            updateLocalStorage();
+            updateLocalStorage(); // Save after adding
+             row.querySelector('.task-input').focus(); // Focus new task input
         }
 
         function removeRow() {
             const rowContainer = document.getElementById('rows');
             if (rowContainer.children.length > 1) {
-                // Stop timer if running
                 const lastRow = rowContainer.lastChild;
                 if (lastRow.stopwatch && lastRow.stopwatch.isRunning) {
-                    lastRow.stopwatch.stop();
+                    lastRow.stopwatch.stop(); // Stop timer before removing
                 }
                 rowContainer.removeChild(lastRow);
-                updateLocalStorage();
+                updateLocalStorage(); // Save after removing
+            } else {
+                 showNotification("Cannot remove the last row.", "warning");
             }
         }
 
-		// Update the createRow function to handle existing timer values
-		function createRow(existingTime = '00:00.00') {
-			const row = document.createElement('div');
-			row.className = 'row';
+        // Modified createRow to match expected behavior from stopwatch class
+        function createRow(existingTime = '00:00.00', taskName = '') {
+            const row = document.createElement('div');
+            row.className = 'row';
 
-			const stopwatchDisplay = document.createElement('span');
-			stopwatchDisplay.textContent = existingTime;
-			stopwatchDisplay.className = 'stopwatch';
+            const stopwatchDisplay = document.createElement('span');
+            stopwatchDisplay.textContent = existingTime;
+            stopwatchDisplay.className = 'stopwatch';
 
-			const taskInput = document.createElement('input');
-			taskInput.type = 'text';
-			taskInput.placeholder = 'Task Name';
-			taskInput.className = 'task-input';
-			
-			// Prevent form submission on Enter
-			taskInput.addEventListener('keydown', (e) => {
-				if (e.key === 'Enter') {
-					e.preventDefault();
-					taskInput.blur();
-				}
-			});
-			
-			// Save to local storage when input changes
-			taskInput.addEventListener('input', updateLocalStorage);
+            const taskInput = document.createElement('input');
+            taskInput.type = 'text';
+            taskInput.placeholder = 'Task Name';
+            taskInput.className = 'task-input';
+            taskInput.value = taskName;
+            taskInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    taskInput.blur();
+                }
+            });
+            taskInput.addEventListener('input', updateLocalStorage); // Save name changes
 
-			const startButton = document.createElement('button');
-			startButton.textContent = 'Start';
-			startButton.className = 'start-btn';
+            const startButton = document.createElement('button');
+            startButton.textContent = 'Start';
+            startButton.className = 'start-btn';
 
-			const stopButton = document.createElement('button');
-			stopButton.textContent = 'Stop';
-			stopButton.className = 'stop-btn';
-			stopButton.disabled = true;
+            const stopButton = document.createElement('button');
+            stopButton.textContent = 'Stop';
+            stopButton.className = 'stop-btn';
 
-			const resetButton = document.createElement('button');
-			resetButton.textContent = 'Reset';
-			resetButton.className = 'reset-btn';
+            const resetButton = document.createElement('button');
+            resetButton.textContent = 'Reset';
+            resetButton.className = 'reset-btn';
 
-			const stopwatch = new Stopwatch(stopwatchDisplay);
-			stopwatch.rowElement = row;
-			stopwatch.startButton = startButton;
-			stopwatch.stopButton = stopButton;
-			
-			// Add event listeners for buttons
-			startButton.addEventListener('click', () => stopwatch.start());
-			stopButton.addEventListener('click', () => stopwatch.stop());
-			resetButton.addEventListener('click', () => stopwatch.reset());
-			
-			// Store stopwatch reference on the row element
-			row.stopwatch = stopwatch;
+            // Create and configure stopwatch instance
+            const stopwatch = new Stopwatch(stopwatchDisplay);
+            stopwatch.rowElement = row;
+            stopwatch.startButton = startButton;
+            stopwatch.stopButton = stopButton;
+            stopwatch.resetButton = resetButton; // Assign reset button reference
+            row.stopwatch = stopwatch; // Store reference on the row element
 
-			// If there's an existing time, set the elapsed time in the stopwatch
-			if (existingTime !== '00:00.00') {
-				stopwatch.elapsedTime = timeStringToMilliseconds(existingTime);
-			}
-
-			row.appendChild(stopwatchDisplay);
-			row.appendChild(taskInput);
-			row.appendChild(startButton);
-			row.appendChild(stopButton);
-			row.appendChild(resetButton);
-
-			return row;
-		}
+            // Set initial elapsed time and button states correctly
+            if (existingTime !== '00:00.00') {
+                stopwatch.elapsedTime = timeStringToMilliseconds(existingTime);
+            }
+            // Set initial button states based on elapsed time
+            stopButton.disabled = stopwatch.elapsedTime === 0;
+            resetButton.disabled = stopwatch.elapsedTime === 0;
+            // Start button is always enabled initially unless running (which it isn't here)
+            startButton.disabled = false;
 
 
+            // Add event listeners
+            startButton.addEventListener('click', () => stopwatch.start());
+            stopButton.addEventListener('click', () => stopwatch.stop());
+            resetButton.addEventListener('click', () => stopwatch.reset());
+
+            row.appendChild(stopwatchDisplay);
+            row.appendChild(taskInput);
+            row.appendChild(startButton);
+            row.appendChild(stopButton);
+            row.appendChild(resetButton);
+
+            return row;
+        }
+
+
+        // --- Local Storage Functions (Unchanged from previous working version) ---
         function updateLocalStorage() {
+             // console.log("Updating local storage..."); // Debug log
             const rows = document.querySelectorAll('.row');
             const tasks = Array.from(rows).map(row => ({
                 task_name: row.querySelector('.task-input').value,
                 elapsed_time: row.querySelector('.stopwatch').textContent
             }));
-            
+
             try {
                 localStorage.setItem('taskTimers', JSON.stringify(tasks));
             } catch (err) {
                 console.error('Error saving to local storage:', err);
+                showNotification('Could not save data locally. Storage might be full.', 'error');
             }
         }
 
-		function loadFromLocalStorage() {
-			try {
-				const saved = localStorage.getItem('taskTimers');
-				if (saved) {
-					const tasks = JSON.parse(saved);
-					const rowsContainer = document.getElementById('rows');
-					rowsContainer.innerHTML = ''; // Clear existing rows
-
-					tasks.forEach(task => {
-						const row = createRow(task.elapsed_time);
-						row.querySelector('.task-input').value = task.task_name;
-						rowsContainer.appendChild(row);
-					});
-					
-					// If no tasks loaded, create a default row
-					if (tasks.length === 0) {
-						addRow();
-					}
-				} else {
-					// If nothing in local storage, add default row
-					addRow();
-				}
-			} catch (err) {
-				console.error('Error loading from local storage:', err);
-				// Add a default row if loading fails
-				addRow();
-			}
-		}
-		function timeStringToMilliseconds(timeString) {
-			const [minutesSeconds, milliseconds] = timeString.split('.');
-			const [minutes, seconds] = minutesSeconds.split(':');
-			
-			return (
-				parseInt(minutes) * 60 * 1000 +
-				parseInt(seconds) * 1000 +
-				parseInt(milliseconds) * 10
-			);
-		}
-				// Track backup times
-		let lastAutoSweepTime = null;
-		let nextScheduledBackup = null;
-
-		// Function to perform auto-sweep
-		async function performAutoSweep(isManualTrigger = false) {
-			// Don't auto-sweep if no rows or if all tasks are empty
-			const rows = document.querySelectorAll('.row');
-			if (rows.length === 0) return;
-
-			let hasNonEmptyTask = false;
-			for (const row of rows) {
-				if (row.querySelector('.task-input').value.trim() !== '') {
-					hasNonEmptyTask = true;
-					break;
-				}
-			}
-			if (!hasNonEmptyTask) return;
-
-			// Get task data
-			const tasks = Array.from(rows).map(row => ({
-				task_name: row.querySelector('.task-input').value.trim(),
-				elapsed_time: row.querySelector('.stopwatch').textContent
-			}));
-
-			try {
-                // ***** CORRECTED LINE *****
-				const response = await fetch('/api/save_tasks', {
-                // ***** END CORRECTION *****
-					method: 'POST',
-					headers: { 'Content-Type': 'application/json' },
-					body: JSON.stringify(tasks)
-				});
-
-				if (response.ok) {
-					const result = await response.json();
-					lastAutoSweepTime = new Date();
-					scheduleNextBackup();
-					updateBackupStatus();
-					
-					if (!isManualTrigger) {
-						showNotification("Auto-backup completed successfully", "success");
-					}
-					
-					console.log("Auto-sweep successful:", result.message || 'Tasks auto-saved successfully');
-				} else {
-					console.error("Auto-sweep failed:", await response.text());
-					if (!isManualTrigger) {
-						showNotification("Automatic backup failed", "error");
-					}
-				}
-			} catch (err) {
-				console.error('Auto-sweep error:', err);
-				if (!isManualTrigger) {
-					showNotification("Automatic backup failed: " + err.message, "error");
-				}
-			}
-		}
-
-		// Calculate and schedule the next backup
-		function scheduleNextBackup() {
-			const now = new Date();
-			
-			// Find the next 15-minute mark (00, 15, 30, 45)
-			const minutes = now.getMinutes();
-			const nextQuarter = Math.ceil(minutes / 15) * 15;
-			
-			nextScheduledBackup = new Date(now);
-			nextScheduledBackup.setMinutes(nextQuarter);
-			nextScheduledBackup.setSeconds(0);
-			nextScheduledBackup.setMilliseconds(0);
-			
-			// If we're already at or past the calculated time, add 15 minutes
-			if (nextScheduledBackup <= now) {
-				nextScheduledBackup.setTime(nextScheduledBackup.getTime() + 15 * 60 * 1000);
-			}
-			
-			// Calculate milliseconds until next backup
-			const timeUntilNextBackup = nextScheduledBackup.getTime() - now.getTime();
-			
-			// Clear any existing timeout and set a new one
-			if (window.backupTimeout) {
-				clearTimeout(window.backupTimeout);
-			}
-			
-			window.backupTimeout = setTimeout(() => {
-				performAutoSweep();
-			}, timeUntilNextBackup);
-			
-			console.log(`Next backup scheduled at ${nextScheduledBackup.toLocaleTimeString()} (in ${Math.round(timeUntilNextBackup/1000)} seconds)`);
-			
-			// Update the status display
-			updateBackupStatus();
-		}
-
-		// Update the backup status display
-		function updateBackupStatus() {
-			const backupStatus = document.getElementById('backup-status');
-			if (!backupStatus) return;
-			
-			const options = { 
-				year: 'numeric', 
-				month: 'long', 
-				day: 'numeric', 
-				hour: '2-digit', 
-				minute: '2-digit',
-				hour12: true
-			};
-			
-			const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-			let statusHTML = '';
-			
-			if (lastAutoSweepTime) {
-				const formattedLastTime = lastAutoSweepTime.toLocaleString(undefined, options);
-				statusHTML += `Last backup done at: ${formattedLastTime} [${timezone}]`;
-			} else {
-				statusHTML += 'No backup performed yet';
-			}
-			
-			if (nextScheduledBackup) {
-				const formattedNextTime = nextScheduledBackup.toLocaleString(undefined, options);
-				statusHTML += `<br>Next backup at: ${formattedNextTime}`;
-			}
-			
-			backupStatus.innerHTML = statusHTML;
-			backupStatus.style.color = lastAutoSweepTime ? '#4CAF50' : '#FFA500';
-		}
-		
-		function setupBackupSystem() {
-			// Create backup status element
-			const container = document.getElementById('container');
-			const backupStatus = document.createElement('div');
-			backupStatus.id = 'backup-status';
-			backupStatus.style.cssText = 'text-align: center; margin-top: 20px; font-size: 12px; color: #FFA500;';
-			backupStatus.innerHTML = 'No backup performed yet';
-			container.appendChild(backupStatus);
-			
-			// Schedule the first backup
-			scheduleNextBackup();
-		}
-		
-        async function loadDate() {
+        function loadFromLocalStorage() {
+             console.log("Loading from local storage..."); // Debug log
             try {
-                const response = await fetch('/api/get_date');
-                const data = await response.json();
-                document.querySelector('h1').textContent = `Ultradian rhythm - ${data.date}`;
+                const saved = localStorage.getItem('taskTimers');
+                const rowsContainer = document.getElementById('rows');
+                rowsContainer.innerHTML = ''; // Clear existing rows before loading
+
+                if (saved) {
+                    const tasks = JSON.parse(saved);
+                    if (tasks.length > 0) {
+                         tasks.forEach(task => {
+                            const row = createRow(task.elapsed_time, task.task_name);
+                            rowsContainer.appendChild(row);
+                        });
+                         console.log(`Loaded ${tasks.length} tasks from local storage.`);
+                    } else {
+                         console.log("Local storage had empty task list, adding default row.");
+                         addRow(); // Add one default row if local storage was empty array
+                    }
+                } else {
+                    console.log("No data in local storage, adding default row.");
+                    addRow(); // Add default row if nothing was saved
+                }
             } catch (err) {
-                console.error('Error loading date:', err);
-                // Show fallback date if API fails
-                const today = new Date().toLocaleDateString();
-                document.querySelector('h1').textContent = `Ultradian rhythm - ${today}`;
-                showNotification('Could not load date from server', 'error');
+                console.error('Error loading from local storage:', err);
+                 showNotification('Could not load local data. Starting fresh.', 'error');
+                const rowsContainer = document.getElementById('rows');
+                rowsContainer.innerHTML = ''; // Clear potentially broken state
+                addRow(); // Add default row on error
             }
         }
 
-		async function loadTasks() {
-			try {
-				const response = await fetch('/api/get_tasks');
-				if (!response.ok) {
-					throw new Error(`Server returned ${response.status}`);
-				}
-				const tasks = await response.json();
-				const rowsContainer = document.getElementById('rows');
-				rowsContainer.innerHTML = ''; // Clear existing rows
-
-				if (tasks.length === 0) {
-					// If no tasks from server, try local storage
-					loadFromLocalStorage();
-					return;
-				}
-
-				tasks.forEach(task => {
-					const row = createRow(task.elapsed_time);
-					row.querySelector('.task-input').value = task.task_name;
-					rowsContainer.appendChild(row);
-				});
-				
-				// Sync to local storage
-				updateLocalStorage();
-			} catch (err) {
-				console.error('Error loading tasks:', err);
-				showNotification('Could not load tasks from server. Loading from local storage...', 'warning');
-				loadFromLocalStorage();
-			}
-		}
-
-        async function sweepTasks() {
-            if (!confirm("Are you sure you want to sweep today's data into the DB?")) return;
-            
-            // Show debug panel if it exists
-            const debugPanel = document.getElementById('debug-panel');
-            if (debugPanel) debugPanel.style.display = 'block';
-            
-            // Log to debug panel
-            function logDebug(message) {
-                if (debugPanel) {
-                    const time = new Date().toLocaleTimeString();
-                    debugPanel.innerHTML += `<div>[${time}] ${message}</div>`;
-                    debugPanel.scrollTop = debugPanel.scrollHeight;
-                }
-                console.log(message);
+        function timeStringToMilliseconds(timeString) {
+            try {
+                const parts = timeString.match(/(\d+):(\d+)\.(\d+)/);
+                if (!parts) return 0;
+                const minutes = parseInt(parts[1], 10);
+                const seconds = parseInt(parts[2], 10);
+                const msTenths = parseInt(parts[3], 10);
+                return minutes * 60000 + seconds * 1000 + msTenths * 10;
+            } catch (e) {
+                console.error("Error parsing time string:", timeString, e);
+                return 0;
             }
-            
-            logDebug("Starting task save...");
-            
-            // Validate input before saving
+        }
+
+        // --- Auto Backup Functions (Copied from previous working version) ---
+         async function performAutoSweep(isManualTrigger = false) {
+            console.log(`Performing sweep (Manual: ${isManualTrigger})...`);
             const rows = document.querySelectorAll('.row');
-            let hasEmptyTasks = false;
-            
-            rows.forEach(row => {
-                const taskName = row.querySelector('.task-input').value.trim();
-                if (taskName === '') {
-                    hasEmptyTasks = true;
-                    row.querySelector('.task-input').classList.add('error');
-                } else {
-                    row.querySelector('.task-input').classList.remove('error');
-                }
-            });
-            
-            if (hasEmptyTasks) {
-                showNotification('Please fill in all task names before saving', 'error');
-                logDebug("Task save aborted: Empty task names found");
+            if (rows.length === 0) {
+                console.log("Auto-sweep skipped: No rows.");
                 return;
             }
-            
-            // Stop all running timers before save
-            rows.forEach(row => {
-                if (row.stopwatch && row.stopwatch.isRunning) {
-                    row.stopwatch.stop();
-                }
-            });
-            
-            const tasks = Array.from(rows).map(row => ({
-                task_name: row.querySelector('.task-input').value.trim(),
-                elapsed_time: row.querySelector('.stopwatch').textContent
-            }));
-            
-            logDebug(`Found ${tasks.length} tasks to save`);
-            logDebug(`Task data: ${JSON.stringify(tasks)}`);
 
-            // Disable save button during operation
-            const saveButton = document.getElementById('sweep-button');
-            saveButton.disabled = true;
-            saveButton.textContent = 'Saving...';
-            
+            let hasNonEmptyTask = false;
+             const tasks = Array.from(rows).map(row => {
+                 const taskName = row.querySelector('.task-input').value.trim();
+                 if (taskName !== '') {
+                     hasNonEmptyTask = true;
+                 }
+                 return {
+                     task_name: taskName, // Send trimmed name
+                     elapsed_time: row.querySelector('.stopwatch').textContent
+                 };
+             });
+
+            if (!hasNonEmptyTask && !isManualTrigger) {
+                console.log("Auto-sweep skipped: All task names are empty.");
+                 scheduleNextBackup();
+                updateBackupStatus();
+                return;
+            }
+
+            console.log(`Backing up ${tasks.length} task entries...`);
+            logDebug(`Backup data: ${JSON.stringify(tasks)}`);
+
             try {
-                logDebug("Sending request to /api/save_tasks...");
                 const response = await fetch('/api/save_tasks', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(tasks)
                 });
-                
-                logDebug(`Response status: ${response.status}`);
-                
-                // Get response as text first
-                const responseText = await response.text();
-                logDebug(`Raw response: ${responseText}`);
-                
-                // Try to parse as JSON
-                let result;
-                try {
-                    result = JSON.parse(responseText);
-                    logDebug(`Parsed response: ${JSON.stringify(result)}`);
-                } catch (e) {
-                    logDebug(`Error parsing response as JSON: ${e.message}`);
-                    showNotification(`Server returned invalid JSON: ${responseText}`, 'error');
-                    return;
-                }
-                
+
+                 const responseText = await response.text();
+                 logDebug(`Backup response status: ${response.status}`);
+                 logDebug(`Backup raw response: ${responseText}`);
+
                 if (response.ok) {
-                    logDebug("Save successful!");
-                    showNotification(result.message || 'Tasks saved successfully!', 'success');
-					// Update the backup status
-					lastAutoSweepTime = new Date();
-					scheduleNextBackup();
-					updateBackupStatus();
+                    let result = {};
+                     try { result = JSON.parse(responseText); } catch(e){ logDebug("Couldn't parse success response as JSON");}
+
+                    sessionLastBackupTime = new Date();
+                    fetchedLastBackupISOString = sessionLastBackupTime.toISOString();
+                    scheduleNextBackup();
+                    updateBackupStatus();
+
+                    const successMsg = result.message || 'Backup completed successfully';
+                     if (isManualTrigger) {
+                          showNotification(successMsg, "success");
+                     }
+                    console.log("Sweep successful:", successMsg);
+                    logDebug(`Sweep successful: ${successMsg}`);
+
                 } else {
-                    logDebug(`Error ${response.status}: ${result.error || 'Unknown error'}`);
-                    showNotification(`Error (${response.status}): ${result.error || 'Unknown error'}`, 'error');
+                     let errorMsg = `Backup failed with status ${response.status}`;
+                     try {
+                         const errorResult = JSON.parse(responseText);
+                         errorMsg = errorResult.error || errorMsg;
+                     } catch(e){ /* Ignore if response wasn't JSON */ }
+
+                    console.error("Sweep failed:", errorMsg);
+                    logDebug(`Sweep failed: ${errorMsg}`);
+                    showNotification(`Backup failed: ${errorMsg}`, "error");
+                     scheduleNextBackup();
+                     updateBackupStatus();
                 }
             } catch (err) {
-                logDebug(`Network error: ${err.message}`);
-                console.error('Error saving tasks:', err);
-                showNotification(`Network error: ${err.message}`, 'error');
-            } finally {
-                // Re-enable save button
-                saveButton.disabled = false;
-                saveButton.textContent = 'Save Progress';
+                console.error('Sweep network/fetch error:', err);
+                 logDebug(`Sweep network/fetch error: ${err.message}`);
+                showNotification("Backup failed: " + err.message, "error");
+                 scheduleNextBackup();
+                 updateBackupStatus();
             }
         }
-        
+
+        function scheduleNextBackup() {
+            const now = new Date();
+            const minutes = now.getMinutes();
+            const minutesToAdd = 15 - (minutes % 15);
+            nextScheduledBackup = new Date(now.getTime() + minutesToAdd * 60 * 1000);
+            nextScheduledBackup.setSeconds(0);
+            nextScheduledBackup.setMilliseconds(0);
+
+            if (nextScheduledBackup.getTime() <= now.getTime() + 1000) {
+                nextScheduledBackup.setTime(nextScheduledBackup.getTime() + 15 * 60 * 1000);
+            }
+
+            const timeUntilNextBackup = nextScheduledBackup.getTime() - now.getTime();
+            if (backupTimeout) {
+                clearTimeout(backupTimeout);
+            }
+
+            console.log(`Next backup scheduled at ${nextScheduledBackup.toLocaleTimeString()} (in ${Math.round(timeUntilNextBackup/1000)} seconds)`);
+            logDebug(`Next backup scheduled: ${nextScheduledBackup.toISOString()} (in ${timeUntilNextBackup}ms)`);
+
+            backupTimeout = setTimeout(() => {
+                console.log("Scheduled backup time reached. Performing auto-sweep.");
+                logDebug("Backup timeout triggered. Performing auto-sweep.");
+                performAutoSweep(false);
+            }, timeUntilNextBackup);
+
+            updateBackupStatus();
+        }
+
+        function updateBackupStatus() {
+            const backupStatus = document.getElementById('backup-status');
+            if (!backupStatus) {
+                 // console.warn("Backup status element not found in updateBackupStatus.");
+                 return;
+             }
+
+            const options = { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true };
+            const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+            let statusHTML = '';
+            let displayTime = null;
+
+            if (sessionLastBackupTime) {
+                displayTime = sessionLastBackupTime;
+            } else if (fetchedLastBackupISOString) {
+                try {
+                    displayTime = new Date(fetchedLastBackupISOString);
+                    if (isNaN(displayTime)) throw new Error("Invalid Date parsed");
+                } catch (e) {
+                    console.error("Error parsing fetchedLastBackupISOString:", fetchedLastBackupISOString, e);
+                    logDebug(`Error parsing fetched backup time: ${fetchedLastBackupISOString}`);
+                    displayTime = null;
+                }
+            }
+
+            if (displayTime) {
+                const formattedLastTime = displayTime.toLocaleString(undefined, options);
+                statusHTML += `Last backup: ${formattedLastTime} [${timezone}]`;
+                backupStatus.style.color = '#4CAF50'; // Green
+            } else {
+                statusHTML += 'No backup performed yet';
+                backupStatus.style.color = '#FFA500'; // Orange
+            }
+
+            if (nextScheduledBackup) {
+                const formattedNextTime = nextScheduledBackup.toLocaleString(undefined, options);
+                statusHTML += `<br>Next backup: ${formattedNextTime}`;
+            } else {
+                 statusHTML += `<br>Next backup: Scheduling...`;
+            }
+
+            backupStatus.innerHTML = statusHTML;
+        }
+
+        function setupBackupSystem() {
+            let backupStatus = document.getElementById('backup-status');
+            if (!backupStatus) {
+                const container = document.getElementById('container');
+                if (!container) { console.error("Container element not found for backup status."); return; }
+
+                backupStatus = document.createElement('div');
+                backupStatus.id = 'backup-status';
+                // Apply styles matching the original intent (ensure CSS covers #backup-status styling)
+                backupStatus.style.cssText = 'text-align: center; margin-top: 20px; font-size: 12px; color: #FFA500; line-height: 1.5; padding: 5px; background-color: rgba(0,0,0,0.05); border-radius: 4px;'; // Re-apply basic style needed if CSS doesn't define it
+                backupStatus.innerHTML = 'Initializing backup status...';
+
+                const controlsDiv = container.querySelector('.controls');
+                if (controlsDiv && controlsDiv.parentNode === container) {
+                     container.insertBefore(backupStatus, controlsDiv.nextSibling);
+                     console.log("Created backup status element after controls.");
+                } else {
+                    container.appendChild(backupStatus); // Fallback append to container end
+                     console.log("Created backup status element at end of container.");
+                }
+            } else {
+                 console.log("Backup status element already exists.");
+            }
+            scheduleNextBackup();
+        }
+
+        // --- Data Loading Functions (Copied from previous working version) ---
+        async function loadDate() {
+            // console.log("Loading date...");
+            try {
+                const response = await fetch('/api/get_date');
+                if (!response.ok) throw new Error(`Date fetch failed: ${response.status}`);
+                const data = await response.json();
+                document.querySelector('h1').textContent = `Ultradian rhythm - ${data.date}`;
+                // console.log("Date loaded:", data.date);
+            } catch (err) {
+                console.error('Error loading date:', err);
+                const today = new Date().toLocaleDateString();
+                document.querySelector('h1').textContent = `Ultradian rhythm - ${today} (offline)`;
+                showNotification('Could not load date from server', 'warning');
+            }
+        }
+
+         async function loadTasks() {
+             // console.log("Loading tasks...");
+             try {
+                 const response = await fetch('/api/get_tasks');
+                 if (!response.ok) {
+                     throw new Error(`Server returned ${response.status} for tasks`);
+                 }
+                 const tasks = await response.json();
+                 const rowsContainer = document.getElementById('rows');
+                 rowsContainer.innerHTML = '';
+
+                 if (!tasks || tasks.length === 0) {
+                     console.log("No tasks from server, trying local storage.");
+                     loadFromLocalStorage();
+                     return;
+                 }
+
+                 console.log(`Loading ${tasks.length} tasks from server.`);
+                 tasks.forEach(task => {
+                     const row = createRow(task.elapsed_time, task.task_name);
+                     rowsContainer.appendChild(row);
+                 });
+                 updateLocalStorage();
+
+             } catch (err) {
+                 console.error('Error loading tasks from server:', err);
+                 showNotification('Could not load tasks from server. Loading local backup...', 'warning');
+                 loadFromLocalStorage();
+             }
+         }
+
+        // --- Manual Save / Sweep Function (Copied from previous working version) ---
+        async function sweepTasks() {
+            logDebug("Sweep tasks button clicked.");
+            if (!confirm("Save current progress to the server? This will overwrite today's previously saved data.")) {
+                 logDebug("Manual save cancelled by user.");
+                 return;
+             }
+
+            const saveButton = document.getElementById('sweep-button');
+            saveButton.disabled = true;
+            saveButton.textContent = 'Saving...';
+            logDebug("Manual save initiated...");
+
+            const rows = document.querySelectorAll('.row');
+            let hasEmptyTasks = false;
+            let hasRunningTimers = false;
+
+            rows.forEach(row => {
+                const taskInput = row.querySelector('.task-input');
+                const taskName = taskInput.value.trim();
+                if (taskName === '') {
+                    hasEmptyTasks = true;
+                    taskInput.classList.add('error');
+                } else {
+                    taskInput.classList.remove('error');
+                }
+                if (row.stopwatch && row.stopwatch.isRunning) {
+                     hasRunningTimers = true;
+                 }
+            });
+
+            if (hasEmptyTasks) {
+                showNotification('Please fill in all task names before saving', 'error');
+                logDebug("Manual save aborted: Empty task names found");
+                 saveButton.disabled = false;
+                 saveButton.textContent = 'Save Progress';
+                return;
+            }
+
+             if (hasRunningTimers) {
+                  showNotification('Stopping active timers before saving...', 'warning');
+                  logDebug("Active timers found, stopping them before manual save.");
+                  rows.forEach(row => {
+                     if (row.stopwatch && row.stopwatch.isRunning) {
+                         row.stopwatch.stop();
+                     }
+                 });
+                 await new Promise(resolve => setTimeout(resolve, 100));
+             }
+
+            await performAutoSweep(true);
+
+            saveButton.disabled = false;
+            saveButton.textContent = 'Save Progress';
+            logDebug("Manual save process finished.");
+        }
+
+        // --- Notification Utility (Copied from previous working version) ---
         function showNotification(message, type = 'info') {
-            // Create notification element if not exists
             let notificationArea = document.getElementById('notification-area');
             if (!notificationArea) {
                 notificationArea = document.createElement('div');
                 notificationArea.id = 'notification-area';
                 document.body.appendChild(notificationArea);
+                // Styles MUST be defined in the <style> block for consistency now
+                // notificationArea.style.cssText = 'position: fixed; top: 20px; right: 20px; z-index: 10000; display: flex; flex-direction: column; align-items: flex-end; gap: 10px;';
+                 console.log("Created notification area dynamically (ensure CSS styles it).");
             }
-            
+
             const notification = document.createElement('div');
+            // Rely entirely on CSS classes defined in <style>
             notification.className = `notification ${type}`;
             notification.textContent = message;
-            
             notificationArea.appendChild(notification);
-            
-            // Auto remove after 5 seconds
+
             setTimeout(() => {
                 notification.classList.add('fade-out');
                 setTimeout(() => {
-                    notification.remove();
+                    if (notification.parentNode) {
+                        notification.remove();
+                    }
                 }, 500);
             }, 5000);
         }
 
-		window.onload = function () {
-			loadDate();
-			loadTasks();
-			document.getElementById('add-row').onclick = addRow;
-			document.getElementById('remove-row').onclick = removeRow;
-			document.getElementById('sweep-button').onclick = sweepTasks;
-			setupBackupSystem(); // Add this line
-			
-			// Add keyboard shortcuts
-			document.addEventListener('keydown', function(e) {
-				// Ctrl+S to save
-				if (e.ctrlKey && e.key === 's') {
-					e.preventDefault();
-					sweepTasks();
-				}
-				// Alt+A to add row
-				if (e.altKey && e.key === 'a') {
-					e.preventDefault();
-					addRow();
-				}
-				// Alt+D to delete row
-				if (e.altKey && e.key === 'd') {
-					e.preventDefault();
-					removeRow();
-				}
-				// Alt+B for manual backup
-				if (e.altKey && e.key === 'b') {
-					e.preventDefault();
-					performAutoSweep(true);
-					showNotification("Manual backup initiated", "info");
-				}
-			});
-		};
+         // --- Debug Panel Utility (Copied from previous working version) ---
+         function logDebug(message) {
+            const debugPanel = document.getElementById('debug-panel');
+            // Only log if panel exists and is visible
+            if (debugPanel && debugPanel.style.display !== 'none') {
+                const time = new Date().toLocaleTimeString();
+                 const safeMessage = String(message).replace(/</g, "&lt;").replace(/>/g, "&gt;");
+                debugPanel.innerHTML += `<div>[${time}] ${safeMessage}</div>`;
+                debugPanel.scrollTop = debugPanel.scrollHeight;
+            }
+             // console.log(`DEBUG: ${message}`); // Optional console logging
+        }
 
+        // --- Initialization (Copied from previous working version) ---
+        async function loadInitialState() {
+            console.log("Loading initial state...");
+            logDebug("Loading initial state...");
+            await loadDate();
+
+            const fetchLastBackup = fetch('/api/get_last_backup_time')
+                .then(response => {
+                    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+                    return response.json();
+                })
+                .then(data => {
+                    if (data && data.last_backup_time) {
+                        fetchedLastBackupISOString = data.last_backup_time;
+                        logDebug(`Workspaceed last backup time: ${fetchedLastBackupISOString}`);
+                    } else {
+                         logDebug("No last backup time found in DB.");
+                        fetchedLastBackupISOString = null;
+                    }
+                })
+                .catch(err => {
+                    console.error('Error loading last backup time:', err);
+                    logDebug(`Error loading last backup time: ${err.message}`);
+                    showNotification('Could not load last backup status.', 'warning');
+                    fetchedLastBackupISOString = null;
+                });
+
+            const fetchTasks = loadTasks();
+
+            try {
+                await Promise.all([fetchLastBackup, fetchTasks]);
+                 logDebug("Initial state loaded (backup time and tasks).");
+            } catch (error) {
+                console.error("Error during parallel initial state loading:", error);
+                 logDebug(`Error during parallel initial state loading: ${error.message}`);
+            }
+
+            logDebug("Setting up backup system...");
+            setupBackupSystem();
+        }
+
+        // --- Window Load Event (Copied from previous working version) ---
+        window.onload = function () {
+             console.log("Window loaded.");
+            loadInitialState();
+
+            document.getElementById('add-row').onclick = addRow;
+            document.getElementById('remove-row').onclick = removeRow;
+            document.getElementById('sweep-button').onclick = sweepTasks;
+
+            document.addEventListener('keydown', function(e) {
+                 if (document.activeElement.tagName === 'INPUT') return;
+                if (e.ctrlKey && e.key === 's') { e.preventDefault(); sweepTasks(); }
+                if (e.altKey && e.key === 'a') { e.preventDefault(); addRow(); }
+                if (e.altKey && e.key === 'd') { e.preventDefault(); removeRow(); }
+                if (e.altKey && e.key === 'b') { e.preventDefault(); showNotification("Manual backup initiated...", "info"); performAutoSweep(true); }
+            });
+             logDebug("Page loaded, initial state loading initiated.");
+        };
+
+        // ===========================================================
+        // END: JAVASCRIPT LOGIC FOR PERSISTENCE
+        // ===========================================================
     </script>
     <style>
-        body {
-            font-family: Arial, sans-serif;
-            margin: 0;
-            padding: 0;
+        /* --- All CSS exactly as provided in the FIRST prompt --- */
+       body {
+           font-family: Arial, sans-serif;
+           margin: 0;
+           padding: 0;
+           display: flex;
+           flex-direction: column;
+           align-items: center;
+           justify-content: center;
+           min-height: 100vh;
+           background-color: #0a0a1a; /* Dark navy blue */
+           color: white;
+       }
+
+       h1 {
+           margin-bottom: 20px;
+           font-size: 24px;
+           text-align: center;
+       }
+
+       #container {
+           width: 90%;
+           max-width: 600px;
+           background: white;
+           box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+           border-radius: 8px;
+           padding: 20px;
+           color: black;
+            position: relative; /* Added from original for shortcuts */
+       }
+
+       .row {
+           display: flex;
+           align-items: center;
+           justify-content: space-between;
+           flex-wrap: wrap;
+           padding: 10px;
+           margin-bottom: 10px;
+           border-radius: 5px;
+           box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+           background: #fff;
+           transition: background-color 0.3s ease;
+           border-left: 4px solid transparent; /* Modified from original for consistency */
+       }
+
+       .row.running {
+           background-color: #e6f7ff; /* Light blue background for running timer */
+           border-left: 4px solid #1890ff; /* Modified from original for consistency */
+       }
+
+       .stopwatch {
+           width: 80px;
+           font-size: 16px;
+           font-weight: bold;
+           text-align: center;
+           margin-bottom: 5px; /* Original has this, maybe affects mobile */
+       }
+
+       .task-input {
+           flex-grow: 1;
+           padding: 8px;
+           border: 1px solid #ddd;
+           border-radius: 4px;
+           font-size: 14px;
+           min-width: 120px;
+           margin-right: 5px;
+           transition: border-color 0.3s;
+       }
+
+       .task-input.error {
+           border-color: #dc3545;
+           background-color: #fff8f8;
+       }
+
+       button {
+           padding: 8px 12px;
+           font-size: 14px;
+           border: none;
+           border-radius: 20px; /* Rounded buttons */
+           cursor: pointer;
+           transition: 0.2s;
+           /* Removed margin from general button, apply specifically if needed */
+       }
+
+       button:disabled {
+           opacity: 0.5;
+           cursor: not-allowed;
+       }
+
+       button:hover:not(:disabled) {
+           opacity: 0.8;
+       }
+
+       .start-btn { background-color: #28a745; color: white; }
+       .stop-btn { background-color: #dc3545; color: white; }
+       .reset-btn { background-color: #ffc107; color: black; }
+
+       /* Added spacing between buttons in a row specifically */
+       .row button {
+           margin: 5px;
+       }
+
+       .controls {
+           display: flex;
+           justify-content: center;
+           gap: 15px;
+           margin-top: 10px; /* Original has 10px */
+            /* Added from prev answer for consistency */
+            border-top: 1px solid #eee;
+            padding-top: 15px;
+       }
+
+       .controls button {
+           font-size: 18px;
+           padding: 10px;
+           width: 50px; /* Original width */
+           height: 50px; /* Original height */
+           font-weight: bold;
+           border-radius: 50%; /* Make controls circular */
+           /* Added from prev answer */
             display: flex;
-            flex-direction: column;
-            align-items: center;
             justify-content: center;
-            min-height: 100vh;
-            background-color: #0a0a1a; /* Dark navy blue */
-            color: white;
-        }
-
-        h1 {
-            margin-bottom: 20px;
-            font-size: 24px;
-            text-align: center;
-        }
-
-        #container {
-            width: 90%;
-            max-width: 600px;
-            background: white;
-            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
-            border-radius: 8px;
-            padding: 20px;
-            color: black;
-        }
-
-        .row {
-            display: flex;
             align-items: center;
-            justify-content: space-between;
-            flex-wrap: wrap;
-            padding: 10px;
-            margin-bottom: 10px;
-            border-radius: 5px;
-            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-            background: #fff;
-            transition: background-color 0.3s ease;
-        }
-        
-        .row.running {
-            background-color: #e6f7ff; /* Light blue background for running timer */
-            border-left: 4px solid #1890ff;
-        }
+            line-height: 1;
+       }
 
-        .stopwatch {
-            width: 80px;
-            font-size: 16px;
-            font-weight: bold;
-            text-align: center;
-            margin-bottom: 5px;
-        }
-
-        .task-input {
-            flex-grow: 1;
-            padding: 8px;
-            border: 1px solid #ddd;
-            border-radius: 4px;
+       .controls #add-row { background-color: #007bff; color: white; }
+       .controls #remove-row { background-color: #ffc107; color: black; }
+       .controls #sweep-button {
+           background-color: #17a2b8;
+           color: white;
+           border-radius: 20px; /* Original radius */
+           width: auto; /* Original width */
+           height: auto; /* Original height */
+           padding: 8px 15px; /* Original padding */
+            /* Revert font size/weight from prev */
             font-size: 14px;
-            min-width: 120px;
-            margin-right: 5px;
-            transition: border-color 0.3s;
-        }
-        
-        .task-input.error {
-            border-color: #dc3545;
-            background-color: #fff8f8;
+            font-weight: normal;
+       }
+       .controls #sweep-button:disabled { /* Added from prev */
+            background-color: #ccc !important;
+       }
+
+
+       /* Notification styles */
+       #notification-area {
+           position: fixed;
+           top: 20px;
+           right: 20px;
+           z-index: 10000;
+           display: flex;
+           flex-direction: column;
+           align-items: flex-end;
+           gap: 10px;
+       }
+
+       .notification {
+           padding: 12px 20px;
+           border-radius: 4px;
+           color: white;
+           box-shadow: 0 3px 6px rgba(0,0,0,0.16);
+           animation: slide-in 0.3s ease-out forwards;
+           max-width: 300px;
+            font-size: 14px; /* Added from prev */
+       }
+
+       .notification.info { background-color: #2196F3; }
+       .notification.success { background-color: #4CAF50; }
+       .notification.warning { background-color: #FF9800; }
+       .notification.error { background-color: #f44336; }
+
+       .notification.fade-out {
+           animation: fade-out 0.5s ease-out forwards;
+       }
+
+       @keyframes slide-in {
+           from { transform: translateX(100%); opacity: 0; }
+           to { transform: translateX(0); opacity: 1; }
+       }
+
+       @keyframes fade-out {
+           from { opacity: 1; }
+           to { opacity: 0; }
+       }
+
+       /* Help tooltip */
+       .keyboard-shortcuts {
+           position: absolute;
+           bottom: 10px; /* Original position */
+           left: 10px;   /* Original position */
+           font-size: 12px; /* Original size */
+           color: #aaa;
+           background: rgba(0,0,0,0.7);
+           padding: 5px 10px; /* Original padding */
+           border-radius: 4px;
+           display: none;
+       }
+       /* Show on container hover */
+       #container:hover .keyboard-shortcuts {
+           display: block;
+       }
+
+
+       /* --- Backup Status Style (Copied from Original) --- */
+        #backup-status {
+           text-align: center;
+           margin-top: 20px;
+           font-size: 12px;
+           padding: 8px;
+           border-radius: 4px;
+           background-color: rgba(0, 0, 0, 0.05);
+           transition: all 0.3s ease; /* Original had 'all' */
+           line-height: 1.5;
+           color: #FFA500; /* Default to orange */
+       }
+       #backup-status.updating { /* Style from original */
+            animation: pulse 1.5s infinite;
+       }
+       @keyframes pulse { /* Style from original */
+            0% { opacity: 1; } 50% { opacity: 0.6; } 100% { opacity: 1; }
+       }
+
+       /* Manual backup button styles - Not present in original HTML/CSS, removed */
+       /* #manual-backup-btn { ... } */
+
+       /* Debug Panel Style (Copied from Original) */
+       #debug-panel {
+           display:none; position:fixed; bottom:10px; right:10px; width:400px; height:200px; background:rgba(0,0,0,0.8); color:lime; font-family:monospace; font-size:12px; padding:10px; overflow:auto; z-index:9999; border-radius:5px;
+       }
+        /* Style for the toggle button (must match intent of original JS that created it) */
+        #debug-toggle-button {
+             position:fixed; bottom:10px; right:10px; z-index:10000; background:#333; color:white; border:none; border-radius:5px; padding:5px 10px; cursor: pointer; /* Added */
         }
 
-        button {
-            padding: 8px 12px;
-            font-size: 14px;
-            border: none;
-            border-radius: 20px; /* Rounded buttons */
-            cursor: pointer;
-            transition: 0.2s;
-        }
-        
-        button:disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-        }
 
-        button:hover:not(:disabled) {
-            opacity: 0.8;
-        }
-
-        .start-btn { background-color: #28a745; color: white; }
-        .stop-btn { background-color: #dc3545; color: white; }
-        .reset-btn { background-color: #ffc107; color: black; }
-
-        /* Added spacing between buttons */
-        .row button {
-            margin: 5px;
-        }
-
-        .controls {
-            display: flex;
-            justify-content: center;
-            gap: 15px;
-            margin-top: 10px;
-        }
-
-        .controls button {
-            font-size: 18px;
-            padding: 10px;
-            width: 50px;
-            font-weight: bold;
-            border-radius: 50%; /* Make controls circular */
-        }
-
-        .controls #add-row { background-color: #007bff; color: white; }
-        .controls #remove-row { background-color: #ffc107; color: black; }
-        .controls #sweep-button { 
-            background-color: #17a2b8; 
-            color: white; 
-            border-radius: 20px; 
-            width: auto; 
-            padding: 8px 15px;
-        }
-        
-        /* Notification styles */
-        #notification-area {
-            position: fixed;
-            top: 20px;
-            right: 20px;
-            z-index: 10000;
-            display: flex;
-            flex-direction: column;
-            align-items: flex-end;
-            gap: 10px;
-        }
-        
-        .notification {
-            padding: 12px 20px;
-            border-radius: 4px;
-            color: white;
-            box-shadow: 0 3px 6px rgba(0,0,0,0.16);
-            animation: slide-in 0.3s ease-out forwards;
-            max-width: 300px;
-        }
-        
-        .notification.info {
-            background-color: #2196F3;
-        }
-        
-        .notification.success {
-            background-color: #4CAF50;
-        }
-        
-        .notification.warning {
-            background-color: #FF9800;
-        }
-        
-        .notification.error {
-            background-color: #f44336;
-        }
-        
-        .notification.fade-out {
-            animation: fade-out 0.5s ease-out forwards;
-        }
-        
-        @keyframes slide-in {
-            from { transform: translateX(100%); opacity: 0; }
-            to { transform: translateX(0); opacity: 1; }
-        }
-        
-        @keyframes fade-out {
-            from { opacity: 1; }
-            to { opacity: 0; }
-        }
-
-        /* Help tooltip */
-        .keyboard-shortcuts {
-            position: absolute;
-            bottom: 10px;
-            left: 10px;
-            font-size: 12px;
-            color: #aaa;
-            background: rgba(0,0,0,0.7);
-            padding: 5px 10px;
-            border-radius: 4px;
-            display: none;
-        }
-        
-        #container:hover .keyboard-shortcuts {
-            display: block;
-        }
-
-        @media (max-width: 768px) {
-            #container {
-                width: 95%;
-                padding: 15px;
+       /* --- Responsive Design (Copied from Original) --- */
+       @media (max-width: 768px) {
+            body { /* Added from prev for mobile layout */
+                 justify-content: flex-start;
+                 padding-top: 10px;
+            }
+           #container {
+               width: 95%;
+               padding: 15px;
+           }
+           .row {
+               flex-direction: column;
+               align-items: stretch; /* Changed from center in original - necessary for layout? */
+                /* Added from prev */
+                 padding: 15px;
+                 gap: 8px;
+           }
+           .stopwatch {
+               font-size: 18px;
+               width: auto; /* Original */
+                text-align: center; /* Added from prev */
+                margin-right: 0; /* Added from prev */
+                margin-bottom: 5px; /* Added from prev */
+                padding: 5px; /* Added from prev */
+                background-color: #eee; /* Added from prev */
+                border-radius: 4px; /* Added from prev */
+           }
+           .task-input {
+               width: 100%; /* Original */
+               margin: 5px 0; /* Original */
+                box-sizing: border-box; /* Added from prev */
+           }
+           button { /* General button on mobile */
+               /* width: 100%; */ /* Original */ /* This was causing issues - let row buttons be specific */
+               padding: 10px;
+               font-size: 16px;
+               min-height: 44px; /* Better for touch targets */
+           }
+            /* Specific row button styling for mobile */
+            .row button {
+                 width: 100%;
+                 padding: 10px;
+                 font-size: 14px; /* Match prev */
+                 min-height: 40px;
+                 margin: 3px 0;
             }
 
-            .row {
-                flex-direction: column;
-                align-items: center;
+           .controls button { /* Control buttons */
+               width: 44px; /* Original */
+               height: 44px; /* Original */
+           }
+           .controls #sweep-button {
+               width: auto; /* Original */
+               height: 44px; /* Match height */ /* Original was auto */
+               flex-grow: 1; /* Original */
+                padding: 0 15px; /* Added from prev */
+                font-size: 14px; /* Added from prev */
+           }
+           .keyboard-shortcuts { display: none !important; } /* Original */
+           #backup-status { /* Original mobile */
+                font-size: 10px;
+                margin-top: 15px;
+                padding: 5px;
             }
+           #debug-panel { /* Added from prev */
+                width: 90%; height: 150px; font-size: 10px; bottom: 5px; right: 5px;
+            }
+           #debug-toggle-button { /* Added from prev */
+                bottom: 5px; right: 5px;
+            }
+       }
 
-            .stopwatch {
-                font-size: 18px;
-                width: auto;
+       @media (max-width: 480px) {
+            body { font-size: 14px; padding-top: 5px; /* Added from prev */}
+           #container {
+               width: 100%; /* Original */
+               padding: 10px; /* Original */
+                border-radius: 0; /* Added from prev */
+           }
+           .stopwatch { font-size: 16px; } /* Original */
+           /* button { // General button style */
+               /* width: 100%; */ /* Original - removed */
+               /* padding: 12px; */ /* Original */
+               /* font-size: 14px; */ /* Original */
+           /* } */
+            .row button { /* Specific row button */
+                 padding: 12px;
+                 font-size: 14px;
             }
-
-            .task-input {
-                width: 100%;
-                margin: 5px 0;
-            }
-
-            button {
-                width: 100%;
-                padding: 10px;
-                font-size: 16px;
-                min-height: 44px; /* Better for touch targets */
-            }
-
-            .controls button {
-                width: 44px;
-                height: 44px;
-            }
-            
+           .controls { gap: 10px; } /* Original */
+           .controls button { /* Control buttons */
+               width: 40px; /* Original had 44px here? Let's use 40px */
+               height: 40px; /* Original had 44px here? Let's use 40px */
+                font-size: 16px; /* Added from prev */
+           }
             .controls #sweep-button {
-                width: auto;
-                height: auto;
-                flex-grow: 1;
+                height: 40px; /* Match control buttons */
             }
-            
-            .keyboard-shortcuts {
-                display: none !important; /* Hide shortcuts on mobile */
-            }
-        }
-
-        @media (max-width: 480px) {
-            body { font-size: 14px; }
-
-            #container {
-                width: 100%;
-                padding: 10px;
-            }
-
-            .stopwatch {
-                font-size: 16px;
-            }
-
-            button {
-                width: 100%;
-                padding: 12px;
-                font-size: 14px;
-            }
-
-            .controls {
-                gap: 10px;
-            }
-
-            .controls button {
-                width: 44px;
-                height: 44px;
-            }
-        }
-		#backup-status {
-			text-align: center;
-			margin-top: 20px;
-			font-size: 12px;
-			padding: 8px;
-			border-radius: 4px;
-			background-color: rgba(0, 0, 0, 0.05);
-			transition: all 0.3s ease;
-			line-height: 1.5;
-		}
-
-		#backup-status.updating {
-			animation: pulse 1.5s infinite;
-		}
-
-		@keyframes pulse {
-			0% { opacity: 1; }
-			50% { opacity: 0.6; }
-			100% { opacity: 1; }
-		}
-
-		/* Manual backup button styles */
-		#manual-backup-btn {
-			font-size: 18px;
-			padding: 10px;
-			width: 44px;
-			font-weight: bold;
-			border-radius: 50%;
-			background-color: #6c757d;
-			color: white;
-		}
-
-		@media (max-width: 768px) {
-			#backup-status {
-				font-size: 10px;
-				margin-top: 15px;
-				padding: 5px;
-			}
-		}
+           #backup-status { font-size: 10px; } /* Added from prev */
+       }
+        /* --- End Responsive --- */
     </style>
 </head>
 <body>
     <div id="container">
         <h1>Ultradian rhythm</h1>
-        <div id="rows"></div>
+        <div id="rows">
+            </div>
         <div class="controls">
             <button id="add-row" title="Add row (Alt+A)">+</button>
             <button id="remove-row" title="Remove row (Alt+D)">-</button>
             <button id="sweep-button" title="Save Progress (Ctrl+S)">Save Progress</button>
-        </div>
+            </div>
         <div class="keyboard-shortcuts">
-            Shortcuts: Ctrl+S (Save) | Alt+A (Add) | Alt+D (Delete)
-        </div>
-    </div>
+            Shortcuts: Ctrl+S (Save) | Alt+A (Add) | Alt+D (Delete) | Alt+B (Backup Now) </div>
+         </div>
+
+     <div id="debug-panel"></div>
+     <button id="debug-toggle-button">Debug</button>
+
     <script>
+        // Add event listener for debug toggle button AFTER the DOM is ready
+        // This small script should remain separate or be placed inside window.onload/DOMContentLoaded
         document.addEventListener('DOMContentLoaded', function() {
-            // Create debug panel
-            const debugPanel = document.createElement('div');
-            debugPanel.id = 'debug-panel';
-            debugPanel.style.cssText = 'display:none; position:fixed; bottom:10px; right:10px; width:400px; height:200px; background:rgba(0,0,0,0.8); color:lime; font-family:monospace; font-size:12px; padding:10px; overflow:auto; z-index:9999; border-radius:5px;';
-            document.body.appendChild(debugPanel);
-            
-            // Add debug toggle button
-            const debugButton = document.createElement('button');
-            debugButton.textContent = 'Debug';
-            debugButton.style.cssText = 'position:fixed; bottom:10px; right:10px; z-index:10000; background:#333; color:white; border:none; border-radius:5px; padding:5px 10px;';
-            debugButton.onclick = function() {
-                debugPanel.style.display = debugPanel.style.display === 'none' ? 'block' : 'none';
-            };
-            document.body.appendChild(debugButton);
+            const debugPanel = document.getElementById('debug-panel');
+            const debugButton = document.getElementById('debug-toggle-button');
+             if (debugButton && debugPanel) {
+                 debugButton.onclick = function() {
+                     const isHidden = debugPanel.style.display === 'none';
+                     debugPanel.style.display = isHidden ? 'block' : 'none';
+                     // Update button text if needed (optional)
+                     // debugButton.textContent = isHidden ? 'Hide Debug' : 'Debug';
+                     if(isHidden) logDebug("Debug panel opened.");
+                 };
+             } else {
+                 console.error("Debug panel or toggle button not found.");
+             }
         });
     </script>
 </body>
