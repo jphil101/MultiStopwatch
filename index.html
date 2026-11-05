@@ -49,6 +49,9 @@
                 this.timerInterval = setInterval(() => {
                     this.elapsedTime = Date.now() - this.startTime;
                     this.displayElement.textContent = this.formatTime(this.elapsedTime);
+                    // Show the running time in the browser tab so it's visible from other tabs
+                    const name = this.rowElement?.querySelector('.task-input')?.value.trim();
+                    document.title = `${this.formatTime(this.elapsedTime).slice(0, -3)} · ${name || 'Untitled'}`;
                 }, 10); // Update every 10ms for smooth display
 
                 this.isRunning = true;
@@ -66,6 +69,9 @@
                 clearInterval(this.timerInterval);
                 this.timerInterval = null;
                 this.isRunning = false;
+                this.elapsedTime = Date.now() - this.startTime;
+                this.displayElement.textContent = this.formatTime(this.elapsedTime);
+                document.title = DEFAULT_TITLE;
 
                 // Update button states and visual indication
                 if (this.startButton) this.startButton.disabled = false;
@@ -90,6 +96,8 @@
             }
         }
 
+        const DEFAULT_TITLE = 'Task Timers';
+
         // --- Global Variables for Backup State ---
         let fetchedLastBackupISOString = null; // Store ISO string from DB
         let sessionLastBackupTime = null;      // Store Date object from current session's backup
@@ -109,6 +117,11 @@
             const rowContainer = document.getElementById('rows');
             if (rowContainer.children.length > 1) {
                 const lastRow = rowContainer.lastChild;
+                const lastName = lastRow.querySelector('.task-input').value.trim();
+                const hasData = lastName !== '' || (lastRow.stopwatch && lastRow.stopwatch.elapsedTime > 0);
+                if (hasData && !confirm(`Remove the last row${lastName ? ` ("${lastName}")` : ''} and its recorded time?`)) {
+                    return;
+                }
                 if (lastRow.stopwatch && lastRow.stopwatch.isRunning) {
                     lastRow.stopwatch.stop(); // Stop timer before removing
                 }
@@ -191,33 +204,68 @@
         function updateLocalStorage() {
              // console.log("Updating local storage..."); // Debug log
             const rows = document.querySelectorAll('.row');
-            const tasks = Array.from(rows).map(row => ({
-                task_name: row.querySelector('.task-input').value,
-                elapsed_time: row.querySelector('.stopwatch').textContent
-            }));
+            const tasks = Array.from(rows).map(row => {
+                const sw = row.stopwatch;
+                return {
+                    task_name: row.querySelector('.task-input').value,
+                    elapsed_time: sw ? sw.formatTime(sw.isRunning ? Date.now() - sw.startTime : sw.elapsedTime) : row.querySelector('.stopwatch').textContent,
+                    // A running timer is restored from its start time, so time keeps counting across reloads
+                    running: !!(sw && sw.isRunning),
+                    start_time: sw && sw.isRunning ? sw.startTime : null
+                };
+            });
 
             try {
-                localStorage.setItem('taskTimers', JSON.stringify(tasks));
+                localStorage.setItem('taskTimers', JSON.stringify({
+                    saved_at: Date.now(),
+                    day: new Date().toDateString(),
+                    tasks
+                }));
             } catch (err) {
                 console.error('Error saving to local storage:', err);
                 showNotification('Could not save data locally. Storage might be full.', 'error');
             }
         }
 
+        // Returns { savedAt, day, tasks } or null. Handles the older format (a bare array).
+        function readLocalSnapshot() {
+            try {
+                const raw = JSON.parse(localStorage.getItem('taskTimers'));
+                if (!raw) return null;
+                if (Array.isArray(raw)) return { savedAt: 0, day: null, tasks: raw };
+                return { savedAt: raw.saved_at || 0, day: raw.day || null, tasks: Array.isArray(raw.tasks) ? raw.tasks : [] };
+            } catch (e) {
+                return null;
+            }
+        }
+
+        function renderTasks(tasks) {
+            const rowsContainer = document.getElementById('rows');
+            rowsContainer.innerHTML = '';
+            let runningRow = null;
+            tasks.forEach(task => {
+                const row = createRow(task.elapsed_time, task.task_name);
+                if (task.running && task.start_time) {
+                    row.stopwatch.elapsedTime = Math.max(0, Date.now() - task.start_time);
+                    row.stopwatch.displayElement.textContent = row.stopwatch.formatTime(row.stopwatch.elapsedTime);
+                    runningRow = row;
+                }
+                rowsContainer.appendChild(row);
+            });
+            if (runningRow) runningRow.stopwatch.start();
+        }
+
         function loadFromLocalStorage() {
              console.log("Loading from local storage..."); // Debug log
             try {
-                const saved = localStorage.getItem('taskTimers');
+                const snapshot = readLocalSnapshot();
                 const rowsContainer = document.getElementById('rows');
                 rowsContainer.innerHTML = ''; // Clear existing rows before loading
 
-                if (saved) {
-                    const tasks = JSON.parse(saved);
+                if (snapshot) {
+                    const tasks = snapshot.tasks;
                     if (tasks.length > 0) {
-                         tasks.forEach(task => {
-                            const row = createRow(task.elapsed_time, task.task_name);
-                            rowsContainer.appendChild(row);
-                        });
+                         renderTasks(tasks);
                          console.log(`Loaded ${tasks.length} tasks from local storage.`);
                     } else {
                          console.log("Local storage had empty task list, adding default row.");
@@ -454,8 +502,6 @@
                      throw new Error(`Server returned ${response.status} for tasks`);
                  }
                  const tasks = await response.json();
-                 const rowsContainer = document.getElementById('rows');
-                 rowsContainer.innerHTML = '';
 
                  if (!tasks || tasks.length === 0) {
                      console.log("No tasks from server, trying local storage.");
@@ -463,11 +509,18 @@
                      return;
                  }
 
+                 // Don't let an older server backup (taken up to 15 min ago) overwrite newer progress
+                 // made in this browser, e.g. a timer that was running when the page was reloaded.
+                 const local = readLocalSnapshot();
+                 const serverTime = fetchedLastBackupISOString ? new Date(fetchedLastBackupISOString).getTime() : 0;
+                 if (local && local.tasks.length && local.day === new Date().toDateString() && local.savedAt >= serverTime) {
+                     console.log("Local data is newer than the last server backup; using it.");
+                     loadFromLocalStorage();
+                     return;
+                 }
+
                  console.log(`Loading ${tasks.length} tasks from server.`);
-                 tasks.forEach(task => {
-                     const row = createRow(task.elapsed_time, task.task_name);
-                     rowsContainer.appendChild(row);
-                 });
+                 renderTasks(tasks);
                  updateLocalStorage();
 
              } catch (err) {
@@ -602,10 +655,10 @@
                     fetchedLastBackupISOString = null;
                 });
 
-            const fetchTasks = loadTasks();
-
             try {
-                await Promise.all([fetchLastBackup, fetchTasks]);
+                // Backup time is needed first to decide whether server or local data is newer
+                await fetchLastBackup;
+                await loadTasks();
                  logDebug("Initial state loaded (backup time and tasks).");
             } catch (error) {
                 console.error("Error during parallel initial state loading:", error);
@@ -625,9 +678,13 @@
             document.getElementById('remove-row').onclick = removeRow;
             document.getElementById('sweep-button').onclick = sweepTasks;
 
+            // Keep the saved snapshot current when the tab is hidden or closed
+            document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') updateLocalStorage(); });
+            window.addEventListener('pagehide', updateLocalStorage);
+
             document.addEventListener('keydown', function(e) {
+                if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); sweepTasks(); return; }
                  if (document.activeElement.tagName === 'INPUT') return;
-                if (e.ctrlKey && e.key === 's') { e.preventDefault(); sweepTasks(); }
                 if (e.altKey && e.key === 'a') { e.preventDefault(); addRow(); }
                 if (e.altKey && e.key === 'd') { e.preventDefault(); removeRow(); }
                 if (e.altKey && e.key === 'b') { e.preventDefault(); showNotification("Manual backup initiated...", "info"); performAutoSweep(true); }
